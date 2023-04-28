@@ -1,0 +1,206 @@
+{
+  "class_name": "Query9Executor",
+  "pre_initialization" : "",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    ],
+  "stages" : [
+    {
+      "stage_name" : "PartPartition",
+      "in_file" : "\"part/part.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["p_partkey", "LONG"],
+        ["p_name", "STRING", 55]
+      ],
+      "out_columns" : [
+        ["p_partkey", "LONG"]
+      ],
+      "partition_column" : "p_partkey",
+      "filter_condition" : "p_name.find(\"cyan\") != std::string::npos",
+      "in_partitions_name" : "num_part",
+      "out_partitions_name" : "p_ps_partitions"
+    },
+    {
+      "stage_name" : "PartsuppPartition",
+      "in_file" : "\"partsupp/partsupp.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["ps_partkey", "LONG"],
+        ["ps_suppkey", "LONG"],
+        ["ps_supplycost", "DOUBLE"]
+      ],
+      "out_columns" : [
+        ["ps_partkey", "LONG"],
+        ["ps_suppkey", "LONG"],
+        ["ps_supplycost", "DOUBLE"]
+      ],
+      "partition_column" : "ps_partkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_partsupp",
+      "out_partitions_name" : "p_ps_partitions"
+    },
+    {
+      "stage_name" : "LineitemPartition",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["l_orderkey", "LONG"],
+        ["l_partkey", "LONG"],
+        ["l_suppkey", "LONG"],
+        ["l_quantity", "DOUBLE"],
+        ["l_extendedprice", "DOUBLE"],
+        ["l_discount", "DOUBLE"]
+      ],
+      "out_columns" : [
+        ["l_orderkey", "LONG"],
+        ["l_partkey", "LONG"],
+        ["l_suppkey", "LONG"],
+        ["l_quantity", "DOUBLE"],
+        ["l_extendedprice", "DOUBLE"],
+        ["l_discount", "DOUBLE"]
+      ],
+      "partition_column" : "l_partkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_lineitem",
+      "out_partitions_name" : "pl_partitions"
+    },
+    {
+      "stage_name" : "SupplierPartition",
+      "in_file" : "\"supplier/supplier.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["s_suppkey", "LONG"],
+        ["s_nationkey", "LONG"]
+      ],
+      "out_columns" : [
+        ["s_suppkey", "LONG"],
+        ["s_nationkey", "LONG"]
+      ],
+      "partition_column" : "s_suppkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_supplier",
+      "out_partitions_name" : "s_ps_partitions"
+    },
+    {
+      "stage_name" : "OrdersPartition",
+      "in_file" : "\"orders/orders.tbl.%d.orc\", (taskNum/4 + 1) ",
+      "splits" : 4, 
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["o_orderkey", "LONG"],
+        ["o_orderdate", "DATE"]
+      ],
+      "out_columns" : [
+        ["o_orderkey", "LONG"],
+        ["o_year", "LONG", "CUSTOM", "struct tm temp_tm{}; gmtime_r(&o_orderdate, &temp_tm); out_rec.o_year = temp_tm.tm_year + 1900; \n"]
+      ],
+      "partition_column" : "o_orderkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_orders",
+      "out_partitions_name" : "lo_partitions"
+    },
+    {
+      "stage_name" : "NationFilter",
+      "in_file" : "\"nation/nation.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["n_nationkey", "LONG"],
+        ["n_name", "STRING", 25]
+      ],
+      "out_columns" : [
+        ["n_nationkey", "LONG"],
+        ["n_name", "STRING", 25]
+      ],
+      "partition_column" : "n_nationkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_nation",
+      "out_partitions_name" : "num_nation"
+    },
+    {
+      "stage_name" : "PPsJoin",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "PartPartition",
+      "right_input" : "PartsuppPartition",
+      "pipeline" : "off",
+      "out_columns" : [
+        ["ps_supplycost", "LONG", "right"],
+        ["ps_suppkey", "LONG", "right"],
+        ["p_partkey", "LONG", "left"]
+      ],
+      "partition_column" : "p_partkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "p_ps_partitions",
+      "out_partitions_name" : "pl_partitions"
+    },
+    {
+      "stage_name" : "PLJoin",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "PPsJoin",
+      "right_input" : "LineitemPartition",
+      "pipeline" : "off",
+      "out_columns" : [
+        ["l_orderkey", "LONG", "right"],
+        ["l_quantity", "DOUBLE", "right"],
+        ["l_extendedprice", "DOUBLE", "right"],
+        ["l_discount", "DOUBLE", "right"],
+        ["ps_supplycost", "LONG", "left"],
+        ["ps_suppkey", "LONG", "left"]
+      ],
+      "partition_column" : "ps_suppkey",
+      "filter_condition" : "left_rec.ps_suppkey == right_rec.l_suppkey",
+      "in_partitions_name" : "pl_partitions",
+      "out_partitions_name" : "s_ps_partitions"
+    },
+    {
+      "stage_name" : "SPsJoin",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "SupplierPartition",
+      "right_input" : "PLJoin",
+      "pipeline" : "off",
+      "out_columns" : [
+        ["l_orderkey", "LONG", "right"],
+        ["l_quantity", "DOUBLE", "right"],
+        ["l_extendedprice", "DOUBLE", "right"],
+        ["l_discount", "DOUBLE", "right"],
+        ["ps_supplycost", "LONG", "right"],
+        ["s_nationkey", "LONG", "left"]
+      ],
+      "partition_column" : "l_orderkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "s_ps_partitions",
+      "out_partitions_name" : "lo_partitions"
+    },
+    {
+      "stage_name" : "LOJoinAggregate",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "SPsJoin",
+      "right_input" : "OrdersPartition",
+      "pipeline" : "off",
+      "broadcast_inputs" : [
+        ["NationFilter", "left_rec.s_nationkey", "true"]
+      ],
+      "group_by_columns" : [
+        ["o_year", "LONG", "right"],
+        ["n_name", "STRING", 25, "bcast_rec1"]
+      ],
+      "aggregate_columns" : [
+        ["amount", "DOUBLE"]
+      ],
+      "order_by_columns" : [
+        ["n_name", "STRING", 25],
+        ["o_year", "LONG", "DESC"]
+      ],
+      "aggregate_code" : "agg_rec.amount += left_rec.l_extendedprice *(1.0 - left_rec.l_discount) - left_rec.ps_supplycost * left_rec.l_quantity;\n",
+      "reduce_aggregate" : "agg_rec.amount+=in_agg_rec.amount;\n",
+      "filter_condition" : "true",
+      "in_partitions_name" : "lo_partitions"
+    },
+    {
+      "stage_name" : "SortFinalAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "LOJoinAggregate"
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{tasks}
+
+void {class_name}::{stage_name}(int numInFiles, int inPartitions, int taskNum){{
+  auto start = std::chrono::steady_clock::now();
+  int file_factor = {file_factor};
+  int partition_factor = {partition_factor};
+  int file_task = taskNum/partition_factor;
+  int partition_task = taskNum%partition_factor;
+  int min_partition = (inPartitions/partition_factor)*partition_task;
+  int max_partition = partition_task == partition_factor-1 ? inPartitions : ((inPartitions/partition_factor)*(partition_task+1));
+  std::vector<SinglePartitionData> partitionData(inPartitions);
+  std::vector<int> taskList;
+
+  {task_launch}
+
+  taskList.clear();
+  auto end_read_time = std::chrono::steady_clock::now();
+  auto outs = std::make_shared<std::stringstream>();
+{output_dictionaries}
+  
+  auto dict_out = outs->str();
+  outs.reset();
+
+  long total_rows = 0;
+  std::vector<CompressedData> compressedParts;
+  long after_size = dict_out.size() + inPartitions * 8;
+  for (int partNum = 0; partNum < inPartitions; partNum++){{
+    total_rows += partitionData.at(partNum).numRecords;
+    auto & curBuf = partitionData.at(partNum).buf;
+    after_size += curBuf.tellp();
+  }}
+  
+  uint64_t currSize = dict_out.size() + inPartitions * 8;
+  std::unique_ptr<char[]> outBuf(new char[after_size]);
+  uint64_t currLoc = 0;
+  std::memcpy(outBuf.get()+currLoc, dict_out.data(), dict_out.size());
+  currLoc += dict_out.size();
+  for (int partNum = 0; partNum < inPartitions; partNum++){{
+    auto & curBuf = partitionData.at(partNum).buf;
+    currSize += curBuf.tellp();
+    std::memcpy(outBuf.get()+currLoc, reinterpret_cast<char*>(&currSize), sizeof(currSize));
+    currLoc += sizeof(currSize);
+  }}
+  for (int partNum = 0; partNum < inPartitions; partNum++){{
+    auto & curBuf = partitionData.at(partNum).buf;
+    auto outSize = curBuf.tellp();
+    auto outStr = curBuf.str();
+    std::memcpy(outBuf.get()+currLoc, outStr.data(), outSize);
+    curBuf.str("");
+    currLoc += outSize;
+  }}
+
+  S3Client s3("INTERMEDIATE_BUCKET_NAME", "us-east-1", 1);
+
+  auto end_convert_time = std::chrono::steady_clock::now();
+
+  std::string s3Name = std::to_string(taskNum)+std::string("_pt{operator_idx}_")+query_id;
+  writeToS3(s3, s3Name, outBuf.get(), currLoc);
+  auto after_write = std::chrono::steady_clock::now();
+  long read_time = std::chrono::duration_cast<std::chrono::milliseconds>(end_read_time-start).count();
+  long convert_time = std::chrono::duration_cast<std::chrono::milliseconds>(end_convert_time-end_read_time).count();
+  long write_time = std::chrono::duration_cast<std::chrono::milliseconds>(after_write-end_convert_time).count();
+  long total_time = std::chrono::duration_cast<std::chrono::milliseconds>(after_write-start).count();
+  std::cout << total_rows << " " << total_time << " " << read_time << " " << convert_time << " " << write_time << " " << S3Client::GetNumReads() << " " << S3Client::GetNumWrites() << std::endl;
+
+}}
+
+

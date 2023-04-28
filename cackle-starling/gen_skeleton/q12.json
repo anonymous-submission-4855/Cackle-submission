@@ -1,0 +1,97 @@
+{
+  "class_name": "Query12Executor",
+  "pre_initialization" : "struct tm tempDate{};",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    { "name" : "min_recpdate",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 1, 0, 93};\n  min_recpdate = mktime(&tempDate);"
+    },
+    { "name" : "max_recpdate",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 1, 0, 94};\n  max_recpdate = mktime(&tempDate);"
+    },
+    { "name" : "shipmode_1",
+      "type" : "std::string",
+      "initialization" : 
+      "shipmode_1 = std::string(\"RAIL      \", 10);"
+    },
+    { "name" : "shipmode_2",
+      "type" : "std::string",
+      "initialization" : 
+      "shipmode_2 = std::string(\"AIR       \", 10);"
+    }
+    ],
+  "stages" : [
+    {
+      "stage_name" : "LineitemPartition",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\" , taskNum+1",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["l_orderkey", "LONG"],
+        ["l_shipdate", "DATE"],
+        ["l_commitdate", "DATE"],
+        ["l_receiptdate", "DATE"],
+        ["l_shipmode", "STRING", 10]
+      ],
+      "out_columns" : [
+        ["l_orderkey" , "LONG"],
+        ["l_shipmode" , "STRING", 10]
+      ],
+      "partition_column" : "l_orderkey",
+      "filter_condition" : "(l_shipmode == shipmode_1 || l_shipmode == shipmode_2) && l_commitdate < l_receiptdate && l_shipdate < l_commitdate && l_receiptdate >= min_recpdate && l_receiptdate < max_recpdate",
+      "in_partitions_name" : "num_lineitem",
+      "out_partitions_name" : "ol_partitions"
+    },
+    {
+      "stage_name" : "OrdersPartition",
+      "in_file" : "\"orders/orders.tbl.%d.orc\" , (taskNum/2 + 1)",
+      "splits" : 2,
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["o_orderkey", "LONG"],
+        ["o_orderpriority", "STRING", 15]
+      ],
+      "out_columns" : [
+        ["o_orderkey", "LONG"],
+        ["o_orderpriority", "STRING", 15, "DICT"]
+      ],
+      "partition_column" : "o_orderkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_orders",
+      "out_partitions_name" : "ol_partitions"
+    },
+    {
+      "stage_name" : "OLJoinAggregate",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "LineitemPartition",
+      "right_input" : "OrdersPartition",
+      "pipeline" : "off",
+      "group_by_columns" : [
+        ["l_shipmode" , "STRING", 10, "left"]
+      ],
+      "aggregate_columns" : [
+        ["high_line_count", "LONG"],
+        ["low_line_count", "LONG"]
+      ],
+      "order_by_columns" : [
+        ["l_shipmode", "STRING", 10]
+      ],
+      "aggregate_code" : "muxs[0].lock();\nstd::string &o_orderpriority = o_orderpriority_dict_encoding_read[right_rec.o_orderpriority_enc];\nmuxs[0].unlock();\nif (o_orderpriority == \"1-URGENT       \" || o_orderpriority == \"2-HIGH         \") agg_rec.high_line_count++;\nelse agg_rec.low_line_count++;",
+      "reduce_aggregate" : "agg_rec.high_line_count+=in_agg_rec.high_line_count;\nagg_rec.low_line_count+=in_agg_rec.low_line_count;",
+      "filter_condition" : "true",
+      "in_partitions_name" : "ol_partitions"
+    },
+    {
+      "stage_name" : "SortFinalAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "OLJoinAggregate",
+      "order_by_columns" : [
+        ["l_shipmode", "STRING", 10]
+      ]
+    }
+  ]
+}

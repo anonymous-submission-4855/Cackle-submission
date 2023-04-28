@@ -1,0 +1,19 @@
+  orc::ReaderOptions readerOpts;
+  
+  char s3KeyBuf[30];
+  sprintf(s3KeyBuf, {in_file_format});
+  std::string key = s3KeyBuf;
+
+  std::unique_ptr<orc::Reader> reader;
+  reader = orc::createReader(std::unique_ptr<orc::InputStream>(new S3FileInputStream("{table_s3_bucket}", s3KeyBuf, currNumThreads)), readerOpts);
+  std::ostringstream os;
+
+  uint64_t numStripes = reader->getNumberOfStripes();
+  currNumThreads = std::min((uint64_t)maxNumThreads, numStripes);
+  boost::asio::thread_pool {tpool_name}(currNumThreads);
+
+  for(uint64_t stripeNum = taskNum % {split}; stripeNum < numStripes; stripeNum+={split}){{
+    boost::asio::post({tpool_name}, boost::bind(&{class_name}::{task_name}, this, key, stripeNum{params}));
+  }}
+  {tpool_name}.join();
+  {tpool_name}.stop();

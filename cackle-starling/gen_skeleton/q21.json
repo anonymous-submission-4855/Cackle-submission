@@ -1,0 +1,207 @@
+{
+  "class_name": "Query21Executor",
+  "pre_initialization" : "",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    ],
+  "stages" : [
+    {
+      "stage_name" : "NationFilter",
+      "in_file" : "\"nation/nation.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["n_nationkey", "LONG"],
+        ["n_name", "STRING", 25]
+      ],
+      "out_columns" : [
+        ["n_nationkey", "LONG"]
+      ],
+      "partition_column" : "n_nationkey",
+      "filter_condition" : "n_name == \"SAUDI ARABIA             \"",
+      "in_partitions_name" : "num_nation",
+      "out_partitions_name" : "num_nation"
+    },
+    {
+      "stage_name" : "NSJoin",
+      "type" : "BroadcastJoinBaseTable",
+      "left_input" : "NationFilter",
+      "right_input": {
+        "in_file" : "\"supplier/supplier.tbl.%d.orc\", (taskNum + 1) ",
+        "in_columns" : [
+          ["s_suppkey" , "LONG"],
+          ["s_name" , "STRING",25],
+          ["s_nationkey" , "LONG"]
+        ],
+        "out_columns" : [
+          ["s_suppkey" , "LONG"],
+          ["s_nationkey" , "LONG"],
+          ["s_name" , "STRING",25]
+        ],
+        "partition_column" : "s_nationkey",
+        "filter_condition" : "true",
+        "in_partitions_name" : "num_customer",
+        "out_partitions_name" : "num_customer"
+      },
+      "out_columns" : [
+        ["s_suppkey" , "LONG", "right"],
+        ["s_name" , "STRING",25, "right"]
+      ],
+      "partition_column" : "s_suppkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_supplier",
+      "out_partitions_name" : "sl1_partitions"
+    },
+    {
+      "stage_name" : "L1Partition",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\" , taskNum+1",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["l_orderkey", "LONG"],
+        ["l_suppkey", "LONG"],
+        ["l_commitdate", "DATE"],
+        ["l_receiptdate", "DATE"]
+      ],
+      "out_columns" : [
+        ["l_orderkey", "LONG"],
+        ["l_suppkey", "LONG"]
+      ],
+      "partition_column" : "l_suppkey",
+      "filter_condition" : "(l_receiptdate > l_commitdate)",
+      "in_partitions_name" : "num_lineitem",
+      "out_partitions_name" : "sl1_partitions"
+    },
+    {
+      "stage_name" : "L2Partition",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\" , taskNum+1",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["l_orderkey", "LONG"],
+        ["l_suppkey", "LONG"]
+      ],
+      "out_columns" : [
+        ["l_orderkey", "LONG"],
+        ["l_suppkey", "LONG"]
+      ],
+      "partition_column" : "l_orderkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_lineitem",
+      "out_partitions_name" : "l1l2_partitions"
+    },
+    {
+      "stage_name" : "L3Partition",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\" , taskNum+1",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["l_orderkey", "LONG"],
+        ["l_suppkey", "LONG"],
+        ["l_commitdate", "DATE"],
+        ["l_receiptdate", "DATE"]
+      ],
+      "out_columns" : [
+        ["l_orderkey", "LONG"],
+        ["l_suppkey", "LONG"]
+      ],
+      "partition_column" : "l_orderkey",
+      "filter_condition" : "(l_receiptdate > l_commitdate)",
+      "in_partitions_name" : "num_lineitem",
+      "out_partitions_name" : "l1l3_partitions"
+    },
+    {
+      "stage_name" : "SL1Join",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "NSJoin",
+      "right_input" : "L1Partition",
+      "pipeline" : "off",
+      "out_columns" : [
+        ["l_orderkey", "LONG", "right"],
+        ["l_suppkey", "LONG", "right"],
+        ["s_name", "STRING", "25","left"]
+      ],
+      "partition_column" : "l_orderkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "sl1_partitions",
+      "out_partitions_name" : "l1l2_partitions"
+    },
+    {
+      "stage_name" : "L1L2Join",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "L2Partition",
+      "right_input" : "SL1Join",
+      "exists_cond" : "exists left",
+      "pipeline" : "off",
+      "out_columns" : [
+        ["l_orderkey", "LONG", "right"],
+        ["l_suppkey", "LONG", "right"],
+        ["s_name", "STRING", "25","right"]
+      ],
+      "partition_column" : "l_orderkey",
+      "filter_condition" : "left_rec.l_suppkey != right_rec.l_suppkey",
+      "in_partitions_name" : "l1l2_partitions",
+      "out_partitions_name" : "l1l3_partitions"
+    },
+    {
+      "stage_name" : "L1L3Join",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "L3Partition",
+      "right_input" : "L1L2Join",
+      "exists_cond" : "not exists left",
+      "pipeline" : "off",
+      "out_columns" : [
+        ["l_orderkey", "LONG", "right"],
+        ["s_name", "STRING", "25","right"]
+      ],
+      "partition_column" : "l_orderkey",
+      "filter_condition" : "left_rec.l_suppkey != right_rec.l_suppkey",
+      "in_partitions_name" : "l1l3_partitions",
+      "out_partitions_name" : "lo_partitions"
+    },
+    {
+      "stage_name" : "OrdersPartition",
+      "in_file" : "\"orders/orders.tbl.%d.orc\" , (taskNum + 1)",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["o_orderkey", "LONG"],
+        ["o_orderstatus", "STRING", 1]
+      ],
+      "out_columns" : [
+        ["o_orderkey", "LONG"]
+      ],
+      "partition_column" : "o_orderkey",
+      "filter_condition" : "o_orderstatus == \"F\"",
+      "in_partitions_name" : "num_orders",
+      "out_partitions_name" : "ol_partitions"
+    },
+    {
+      "stage_name" : "OLJoinAggregate",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "L1L3Join",
+      "right_input" : "OrdersPartition",
+      "pipeline" : "off",
+      "group_by_columns" : [
+        ["s_name" , "STRING", 25, "left"]
+      ],
+      "aggregate_columns" : [
+        ["numwait", "LONG"]
+      ],
+      "order_by_columns" : [
+        ["numwait", "LONG", "DESC"],
+        ["s_name", "STRING", 25]
+      ],
+      "aggregate_code" : "agg_rec.numwait +=1;",
+      "reduce_aggregate" : "agg_rec.numwait+=in_agg_rec.numwait;",
+      "filter_condition" : "true",
+      "in_partitions_name" : "ol_partitions"
+    },
+    {
+      "stage_name" : "SortFinalAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "OLJoinAggregate",
+      "limit": "100",
+      "order_by_columns" : [
+        ["numwait", "LONG", "DESC"],
+        ["s_name", "STRING", 25]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+  void {stage_name}(int numLeftFiles, int numRightFiles, int inPartitions,{out_partitions_param} int taskNum);

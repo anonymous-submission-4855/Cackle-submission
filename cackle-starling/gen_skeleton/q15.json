@@ -1,0 +1,145 @@
+{
+  "class_name": "Query15Executor",
+  "pre_initialization" : "struct tm tempDate{};",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    { "name" : "min_shipdate",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 1, 1, 94};\n  min_shipdate = mktime(&tempDate);"
+    },
+    { "name" : "max_shipdate",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 1, 4, 94};\n  max_shipdate = mktime(&tempDate);"
+    }
+    ],
+  "stages" : [
+    {
+      "stage_name" : "LineitemAggregate",
+      "type" : "BaseTableScanAggregate",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\", (taskNum + 1) ",
+      "in_columns" : [
+        ["l_suppkey", "LONG"],
+        ["l_extendedprice", "DOUBLE"],
+        ["l_discount", "DOUBLE"],
+        ["l_shipdate", "DATE"]
+      ],
+      "group_by_columns" : [
+        ["l_suppkey", "LONG"]
+      ],
+      "aggregate_columns" : [
+        ["total_rev", "DOUBLE"]
+      ],
+      "order_by_columns" : [
+      ],
+      "aggregate_code" : "agg_rec.total_rev += (l_extendedprice * (1 - l_discount));",
+      "reduce_aggregate" : "agg_rec.total_rev += in_agg_rec.total_rev;",
+      "filter_condition" : "l_shipdate >= min_shipdate && l_shipdate < max_shipdate",
+      "in_partitions_name" : "num_lineitem",
+      "out_partitions_name" : "view_partitions",
+      "partition_column" : "l_suppkey"
+    },
+    {
+      "stage_name" : "ViewAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "LineitemAggregate",
+      "in_partitions_name" : "view_partitions",
+      "partition_column" : "l_suppkey"
+    },
+    {
+      "stage_name" : "RegionFilter",
+      "in_file" : "\"region/region.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["r_regionkey", "LONG"]
+      ],
+      "out_columns" : [
+        ["r_regionkey", "LONG"]
+      ],
+      "partition_column" : "r_regionkey",
+      "filter_condition" : "false",
+      "in_partitions_name" : "num_region",
+      "out_partitions_name" : "final_partitions"
+    },
+    {
+      "stage_name" : "LastAggregate",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "RegionFilter",
+      "right_input" : "ViewAggregate",
+      "drop_right" : "false",
+      "pipeline" : "off",
+      "outer": false,
+      "group_by_columns" : [
+        ["none" , "LONG", "NONE"]
+      ],
+      "aggregate_columns" : [
+        ["max", "DOUBLE"]
+      ],
+      "order_by_columns" : [
+      ],
+      "aggregate_code" : "agg_rec.max = std::max(right_rec.total_rev, agg_rec.max);",
+      "reduce_aggregate" : "agg_rec.max = std::max(in_agg_rec.max, agg_rec.max);",
+      "filter_condition" : "true",
+      "in_partitions_name" : "final_partitions"
+    },
+    {
+      "stage_name" : "MaxAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "LastAggregate",
+      "partition_column" : "none"
+    },
+    {
+      "stage_name" : "SupplierFilter",
+      "in_file" : "\"supplier/supplier.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["s_suppkey", "LONG"],
+        ["s_name", "STRING", 25],
+        ["s_address", "STRING", 40],
+        ["s_phone", "STRING", 15]
+      ],
+      "out_columns" : [
+        ["s_suppkey", "LONG"],
+        ["s_name", "STRING", 25],
+        ["s_address", "STRING", 40],
+        ["s_phone", "STRING", 15]
+      ],
+      "partition_column" : "s_suppkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_supplier",
+      "out_partitions_name" : "final_partitions"
+    },
+    {
+      "stage_name" : "LastJoin",
+      "type" : "PartitionedHashJoinAggregate",
+      "pipeline" : "off",
+      "left_input" : "SupplierFilter",
+      "right_input" : "ViewAggregate",
+      "broadcast_inputs": [
+        ["MaxAggregate", "0", "right_rec.total_rev == bcast_rec1.max"]
+      ],
+      "group_by_columns" : [
+        ["s_suppkey", "LONG", "left"],
+        ["total_rev", "DOUBLE", "right"],
+        ["s_name", "STRING", 25, "left"],
+        ["s_address", "STRING", 40, "left"],
+        ["s_phone", "STRING", 15, "left"]
+      ],
+      "aggregate_columns" : [
+      ],
+      "order_by_columns" : [
+      ],
+      "aggregate_code" : "",
+      "reduce_aggregate" : "",
+      "filter_condition" : "true",
+      "in_partitions_name" : "final_partitions"
+    },
+    {
+      "stage_name" : "UltimateAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "LastJoin"
+    }
+  ]
+}

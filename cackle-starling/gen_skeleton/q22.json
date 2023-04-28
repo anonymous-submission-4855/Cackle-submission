@@ -1,0 +1,105 @@
+{
+  "class_name": "Query22Executor",
+  "pre_initialization" : "",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    ],
+  "stages" : [
+    {
+      "stage_name" : "CustomerAggregate",
+      "in_file" : "\"customer/customer.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanAggregate",
+      "in_columns" : [
+        ["c_phone", "STRING", 15],
+        ["c_acctbal", "DOUBLE"],
+        ["countrycode", "CUSTOM", "std::string {col_name} = c_phone.substr(0, 2);"]
+      ],
+      "group_by_columns" : [
+        ["none", "LONG", "NONE"]
+      ],
+      "aggregate_columns" : [
+        ["count", "LONG", "NONE"],
+        ["sum", "DOUBLE", "NONE"]
+      ],
+      "order_by_columns" : [
+      ],
+      "aggregate_code" : "agg_rec.count +=1;\n agg_rec.sum += c_acctbal;",
+      "reduce_aggregate" : "agg_rec.count += in_agg_rec.count;\n agg_rec.sum += in_agg_rec.sum;",
+      "filter_condition" : "c_acctbal > 0 && (countrycode == \"13\" || countrycode == \"31\" || countrycode == \"23\" || countrycode == \"29\" || countrycode == \"30\" || countrycode == \"18\" || countrycode == \"17\" )",
+      "in_partitions_name" : "num_customer"
+    },
+    {
+      "stage_name" : "CustomerAverage",
+      "type" : "FinalAggregate",
+      "partition_column" : "none",
+      "finalize_out_rec" : "rec.sum /= (double)rec.count;\nrec.count = 0;",
+      "in_operator" : "CustomerAggregate"
+    },
+    {
+      "stage_name" : "OrdersPartition",
+      "in_file" : "\"orders/orders.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["o_custkey", "LONG"]
+      ],
+      "out_columns" : [
+        ["o_custkey", "LONG"]
+      ],
+      "partition_column" : "o_custkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_orders",
+      "out_partitions_name" : "oc_partitions"
+    },
+    {
+      "stage_name" : "CustomerPartition",
+      "in_file" : "\"customer/customer.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["c_custkey", "LONG"],
+        ["c_phone", "STRING", 15],
+        ["c_acctbal", "DOUBLE"],
+        ["countrycode", "CUSTOM", "std::string {col_name} = c_phone.substr(0, 2);"]
+      ],
+      "out_columns" : [
+        ["c_custkey", "LONG"],
+        ["c_acctbal", "DOUBLE"],
+        ["countrycode", "STRING", 2, "CUSTOM", "std::memcpy(out_rec.countrycode, countrycode.data(), 2);\n"]
+      ],
+      "partition_column" : "c_custkey",
+      "filter_condition" : "c_acctbal > 0 && (countrycode == \"13\" || countrycode == \"31\" || countrycode == \"23\" || countrycode == \"29\" || countrycode == \"30\" || countrycode == \"18\" || countrycode == \"17\" )",
+      "in_partitions_name" : "num_customer",
+      "out_partitions_name" : "oc_partitions"
+    },
+    {
+      "stage_name" : "OCJoin",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "OrdersPartition",
+      "right_input" : "CustomerPartition",
+      "pipeline" : "off",
+      "exists" : "left NOT EXISTS",
+      "broadcast_inputs": [
+        ["CustomerAverage", "0", "right_rec.c_acctbal > bcast_rec1.sum"]
+      ],
+      "group_by_columns" : [
+        ["countrycode", "STRING", 2, "right"]
+      ],
+      "aggregate_columns" : [
+        ["num_cust", "LONG"],
+        ["totacctbal", "DOUBLE"]
+      ],
+      "order_by_columns" : [
+        ["countrycode", "STRING", 2, "right"]
+      ],
+      "aggregate_code" : "agg_rec.num_cust += 1; agg_rec.totacctbal += right_rec.c_acctbal;\n",
+      "reduce_aggregate" : "agg_rec.num_cust += in_agg_rec.num_cust;agg_rec.totacctbal += in_agg_rec.totacctbal;\n",
+      "filter_condition" : "true",
+      "in_partitions_name" : "oc_partitions"
+    },
+    {
+      "stage_name" : "OutAgg",
+      "type" : "FinalAggregate",
+      "in_operator" : "OCJoin"
+    }
+  ]
+}

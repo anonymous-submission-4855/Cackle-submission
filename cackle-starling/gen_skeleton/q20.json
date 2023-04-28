@@ -1,0 +1,253 @@
+{
+  "class_name": "Query20Executor",
+  "pre_initialization" : "struct tm tempDate{};",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    { "name" : "min_shipdate",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 1, 0, 96};\n  min_shipdate = mktime(&tempDate);"
+    },
+    { "name" : "max_shipdate",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 1, 0, 97};\n  max_shipdate = mktime(&tempDate);"
+    }
+    ],
+  "stages" : [
+    {
+      "stage_name" : "PartPartition",
+      "type" : "BaseTableScanPartition",
+      "in_file" : "\"part/part.tbl.%d.orc\", (taskNum + 1) ",
+      "in_columns" : [
+        ["p_partkey", "LONG"],
+        ["p_name", "STRING", 55]
+      ],
+      "out_columns" : [
+        ["p_partkey", "LONG"]
+      ],
+      "filter_condition" : "p_name.compare(0, 10, \"aquamarine\") == 0",
+      "in_partitions_name" : "num_part",
+      "out_partitions_name" : "p_ps_partitions",
+      "partition_column" : "p_partkey"
+    },
+    {
+      "stage_name" : "PartsuppPartitionInner",
+      "type" : "BaseTableScanPartition",
+      "in_file" : "\"partsupp/partsupp.tbl.%d.orc\", (taskNum + 1) ",
+      "in_columns" : [
+        ["ps_partkey", "LONG"],
+        ["ps_suppkey", "LONG"]
+      ],
+      "out_columns" : [
+        ["ps_partkey", "LONG"],
+        ["ps_suppkey", "LONG"]
+      ],
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_partsupp",
+      "out_partitions_name" : "p_ps_partitions",
+      "partition_column" : "ps_partkey"
+    },
+    {
+      "stage_name" : "LineitemPartitionInner",
+      "type" : "BaseTableScanPartition",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\", (taskNum + 1) ",
+      "in_columns" : [
+        ["l_partkey", "LONG"],
+        ["l_suppkey", "LONG"],
+        ["l_quantity", "DOUBLE"],
+        ["l_shipdate", "DATE"]
+      ],
+      "out_columns" : [
+        ["l_partkey", "LONG"],
+        ["l_suppkey", "LONG"],
+        ["l_quantity", "DOUBLE"],
+        ["l_shipdate", "DATE"]
+      ],
+      "filter_condition" : "l_shipdate >= min_shipdate && l_shipdate < max_shipdate",
+      "in_partitions_name" : "num_lineitem",
+      "out_partitions_name" : "ps_l_partitions_inner",
+      "partition_column" : "l_partkey"
+    },
+    {
+      "stage_name" : "PPsJoinInner",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "PartPartition",
+      "right_input" : "PartsuppPartitionInner",
+      "drop_left" : "false",
+      "pipeline" : "off",
+      "exists" : "left",
+      "out_columns" : [
+        ["ps_partkey", "LONG", "right"],
+        ["ps_suppkey", "LONG", "right"]
+      ],
+      "filter_condition" : "true",
+      "in_partitions_name" : "p_ps_partitions_inner",
+      "partition_column" : "ps_partkey",
+      "out_partitions_name" : "ps_l_partitions_inner"
+    },
+    {
+      "stage_name" : "PsLJoinInner",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "PPsJoinInner",
+      "right_input" : "LineitemPartitionInner",
+      "pipeline" : "off",
+      "group_by_columns" : [
+        ["l_partkey", "LONG", "right"],
+        ["l_suppkey", "LONG", "right"]
+      ],
+      "aggregate_columns" : [
+        ["quantity", "DOUBLE"]
+      ],
+      "order_by_columns" : [
+      ],
+      "aggregate_code" : "agg_rec.quantity += right_rec.l_quantity;",
+      "reduce_aggregate" : "agg_rec.quantity += in_agg_rec.quantity;",
+      "filter_condition" : "left_rec.ps_suppkey == right_rec.l_suppkey",
+      "in_partitions_name" : "ps_l_partitions_inner",
+      "out_partitions_name" : "ps_l_partitions",
+      "partition_column" : "l_partkey"
+    },
+    {
+      "stage_name" : "PsLJoinInnerFinal",
+      "type" : "FinalAggregate",
+      "in_operator" : "PsLJoinInner",
+      "finalize_out_rec" : "rec.quantity  = rec.quantity * 0.5;",
+      "in_partitions_name" : "ps_l_partitions",
+      "partition_column" : "l_partkey"
+    },
+    {
+      "stage_name" : "PartsuppPartition",
+      "type" : "BaseTableScanPartition",
+      "in_file" : "\"partsupp/partsupp.tbl.%d.orc\", (taskNum/2 + 1) ",
+      "splits" : 2,
+      "in_columns" : [
+        ["ps_partkey", "LONG"],
+        ["ps_suppkey", "LONG"],
+        ["ps_availqty", "LONG"]
+      ],
+      "out_columns" : [
+        ["ps_partkey", "LONG"],
+        ["ps_suppkey", "LONG"],
+        ["ps_availqty", "LONG"]
+      ],
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_partsupp",
+      "out_partitions_name" : "p_ps_partitions",
+      "partition_column" : "ps_partkey"
+    },
+    {
+      "stage_name" : "PPsJoin",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "PartPartition",
+      "right_input" : "PartsuppPartition",
+      "drop_left" : "false",
+      "pipeline" : "off",
+      "exists" : "left",
+      "out_columns" : [
+        ["ps_partkey", "LONG", "right"],
+        ["ps_suppkey", "LONG", "right"],
+        ["ps_availqty", "LONG", "right"]
+      ],
+      "filter_condition" : "true",
+      "in_partitions_name" : "p_ps_partitions",
+      "partition_column" : "ps_partkey",
+      "out_partitions_name" : "ps_l_partitions"
+    },
+    {
+      "stage_name" : "LPsJoin",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "PsLJoinInnerFinal",
+      "right_input" : "PPsJoin",
+      "pipeline" : "off",
+      "group_by_columns" : [
+        ["ps_suppkey", "LONG", "right"]
+      ],
+      "aggregate_columns" : [
+      ],
+      "order_by_columns" : [
+      ],
+      "aggregate_code" : "",
+      "reduce_aggregate" : "",
+      "filter_condition" : "left_rec.l_suppkey == right_rec.ps_suppkey && right_rec.ps_availqty > left_rec.quantity",
+      "partition_column" : "ps_suppkey",
+      "in_partitions_name" : "ps_l_partitions_inner",
+      "out_partitions_name" : "s_partitions"
+    },
+    {
+      "stage_name" : "InnerFinal",
+      "type" : "FinalAggregate",
+      "partition_column" : "ps_suppkey",
+      "in_operator" : "LPsJoin",
+      "in_partitions_name" : "ps_l_partitions_inner",
+      "out_partitions_name" : "s_partitions"
+    },
+    {
+      "stage_name" : "NationFilter",
+      "in_file" : "\"nation/nation.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["n_nationkey", "LONG"],
+        ["n_name", "STRING", 25]
+      ],
+      "out_columns" : [
+        ["n_nationkey", "LONG"]
+      ],
+      "partition_column" : "n_nationkey",
+      "filter_condition" : "n_name == \"PERU                     \"",
+      "in_partitions_name" : "num_nation",
+      "out_partitions_name" : "num_nation"
+    },
+    {
+      "stage_name" : "SupplierPartition",
+      "in_file" : "\"supplier/supplier.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["s_suppkey", "LONG"],
+        ["s_name", "STRING", 25],
+        ["s_address", "STRING", 40],
+        ["s_nationkey", "LONG"]
+      ],
+      "out_columns" : [
+        ["s_suppkey", "LONG"],
+        ["s_nationkey", "LONG"],
+        ["s_name", "STRING", 25],
+        ["s_address", "STRING", 40]
+      ],
+      "partition_column" : "s_suppkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_supplier",
+      "out_partitions_name" : "s_partitions"
+    },
+    {
+      "stage_name" : "SPsJoinInner",
+      "type" : "PartitionedHashJoinAggregate",
+      "pipeline" : "off",
+      "broadcast_inputs": [
+        ["NationFilter", "right_rec.s_nationkey", "true"]
+      ],
+      "left_input" : "InnerFinal",
+      "right_input" : "SupplierPartition",
+      "exists" : "left",
+      "group_by_columns" : [
+        ["s_name", "STRING", 25,"right"],
+        ["s_address", "STRING", 40, "right"]
+      ],
+      "aggregate_columns" : [
+      ],
+      "order_by_columns" : [
+        ["s_name", "STRING", 25,"right"]
+      ],
+      "filter_condition" : "true",
+      "in_partitions_name" : "s_partitions",
+      "aggregate_code" : "",
+      "reduce_aggregate" : ""
+    },
+    {
+      "stage_name" : "Final",
+      "type" : "FinalAggregate",
+      "in_operator" : "SPsJoinInner"
+    }
+  ]
+}

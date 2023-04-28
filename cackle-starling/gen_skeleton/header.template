@@ -1,0 +1,55 @@
+#pragma once
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <iostream>
+#include <iomanip>
+#include <sstream>
+#include <fstream>
+#include <chrono>
+#include <thread>
+#include <functional>
+#include <unordered_set>
+
+
+#include <aws/core/Aws.h>
+
+#include <boost/asio/thread_pool.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/bind/bind.hpp>
+
+#include <S3Client.h>
+#include <S3FileInputStream.h>
+#include <QueryExecutor.h>
+
+typedef std::shared_ptr<cackle_cache::GetReply> GetReplyPtr;
+
+namespace starling{{
+
+class {class_name} : public QueryExecutor{{
+  private:
+
+{constants}
+
+{structs}
+
+{dictionary_encodings}
+
+    enum RequestType{{
+{request_types}
+    }};
+
+    {function_declarations}
+
+
+  public:
+    {class_name}();
+
+    int handleRequest(int argc, char **argv) override;
+}};
+
+}} //namespace starling
+
+namespace std{{
+{hash_functions}
+}}

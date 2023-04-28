@@ -1,0 +1,4 @@
+
+  void {stage_name}Task(int inFileIdx, int partitionNum, int in_partitions, std::map<struct {group_by_type}, struct {aggregate_type}> *agg_map, GetReplyPtr cache_data);
+
+  void {stage_name}(int numInFiles, int in_partitions, int taskNum);

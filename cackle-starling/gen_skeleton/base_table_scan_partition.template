@@ -1,0 +1,34 @@
+
+{tasks}
+
+void {class_name}::{stage_name}(int outPartitions, int taskNum){{
+  auto start = std::chrono::steady_clock::now();
+  std::vector<SinglePartitionData> partitionData(outPartitions);
+
+{launch_tasks}
+  auto end_read_time = std::chrono::steady_clock::now();
+
+  //write partitions to file
+  auto outs = std::make_shared<std::stringstream>();
+  
+{output_dictionaries}
+
+
+{convert_partitioned_data}
+
+  auto end_convert_time = std::chrono::steady_clock::now();
+
+
+  if (!all_cached) {{
+    S3Client s3("{intermediate_s3_bucket}", "us-east-1", 1);
+    std::string s3Name = std::to_string(taskNum)+std::string("_pt{operator_idx}_")+query_id;
+    writeToS3(s3, s3Name, outBuf.get(), currLoc);
+  }}
+  auto end_write_time = std::chrono::steady_clock::now();
+  long read_time = std::chrono::duration_cast<std::chrono::milliseconds>(end_read_time-start).count();
+  long convert_time = std::chrono::duration_cast<std::chrono::milliseconds>(end_convert_time-end_read_time).count();
+  long write_time = std::chrono::duration_cast<std::chrono::milliseconds>(end_write_time-end_convert_time).count();
+  long total_time = std::chrono::duration_cast<std::chrono::milliseconds>(end_write_time-start).count();
+  std::cout <<  total_rows << " " << total_time << " " << read_time << " " << convert_time << " " << write_time << " " << S3Client::GetNumReads() << " " << S3Client::GetNumWrites() << " " << currLoc << " " << cache.GetWrittenPartitionsStr()  << std::endl;
+
+}}

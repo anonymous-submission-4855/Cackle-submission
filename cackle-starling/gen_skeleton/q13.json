@@ -1,0 +1,113 @@
+{
+  "class_name": "Query13Executor",
+  "pre_initialization" : "",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    ],
+  "stages" : [
+    {
+      "stage_name" : "OrdersPartition",
+      "in_file" : "\"orders/orders.tbl.%d.orc\", (taskNum/2 + 1) ",
+      "splits" : 2,
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["o_custkey", "LONG"],
+        ["o_comment", "STRING", 79]
+      ],
+      "out_columns" : [
+        ["o_custkey", "LONG"]
+      ],
+      "partition_column" : "o_custkey",
+      "filter_condition" : "!(o_comment.find(\"special\") != std::string::npos && o_comment.find(\"packages\") != std::string::npos && o_comment.find(\"packages\", o_comment.find(\"special\")+7) != std::string::npos)",
+      "in_partitions_name" : "num_orders",
+      "out_partitions_name" : "co_partitions"
+    },
+    {
+      "stage_name" : "CustomerPartition",
+      "in_file" : "\"customer/customer.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["c_custkey", "LONG"]
+      ],
+      "out_columns" : [
+        ["c_custkey", "LONG"]
+      ],
+      "partition_column" : "c_custkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_customer",
+      "out_partitions_name" : "co_partitions"
+    },
+    {
+      "stage_name" : "OLJoinAggregate",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "OrdersPartition",
+      "right_input" : "CustomerPartition",
+      "pipeline" : "off",
+      "outer": true,
+      "group_by_columns" : [
+        ["c_custkey" , "LONG", "right"]
+      ],
+      "aggregate_columns" : [
+        ["count", "LONG"]
+      ],
+      "order_by_columns" : [
+      ],
+      "partition_column" : "c_custkey",
+      "aggregate_code" : "agg_rec.count += 1;",
+      "reduce_aggregate" : "agg_rec.count += in_agg_rec.count;",
+      "filter_condition" : "true",
+      "in_partitions_name" : "co_partitions",
+      "out_partitions_name" : "join_partitions"
+    },
+    {
+      "stage_name" : "Final",
+      "type" : "FinalAggregate",
+      "partition_column" : "c_custkey",
+      "in_partitions_name" : "join_partitions",
+      "in_operator" : "OLJoinAggregate"
+    },
+    {
+      "stage_name" : "NationFilter",
+      "in_file" : "\"nation/nation.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["n_nationkey", "LONG"]
+      ],
+      "out_columns" : [
+        ["n_nationkey", "LONG"]
+      ],
+      "partition_column" : "n_nationkey",
+      "filter_condition" : "false",
+      "in_partitions_name" : "num_nation",
+      "out_partitions_name" : "join_partitions"
+    },
+    {
+      "stage_name" : "LastAggregate",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "NationFilter",
+      "pipeline" : "off",
+      "right_input" : "Final",
+      "outer": false,
+      "group_by_columns" : [
+        ["count" , "LONG", "right"]
+      ],
+      "aggregate_columns" : [
+        ["custdist", "LONG"]
+      ],
+      "order_by_columns" : [
+        ["custdist", "LONG", "DESC"],
+        ["count" , "LONG", "DESC"]
+      ],
+      "aggregate_code" : "agg_rec.custdist += 1;",
+      "reduce_aggregate" : "agg_rec.custdist += in_agg_rec.custdist;",
+      "filter_condition" : "true",
+      "in_partitions_name" : "co_partitions"
+    },
+    {
+      "stage_name" : "Last",
+      "type" : "FinalAggregate",
+      "in_operator" : "LastAggregate"
+    }
+  ]
+}

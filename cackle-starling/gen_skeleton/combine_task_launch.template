@@ -1,0 +1,20 @@
+  currNumThreads = std::min(maxNumThreads, {numInFiles});
+  boost::asio::thread_pool {tpool_name}(currNumThreads);
+  
+
+  std::srand(taskNum);
+  taskList.clear();
+
+  for (int idx = file_task; idx < {numInFiles}; idx+=file_factor){{
+    taskList.push_back(idx);
+  }}
+
+  std::random_shuffle(taskList.begin(), taskList.end());
+
+  for (int taskIdx : taskList){{
+    boost::asio::post({tpool_name}, boost::bind(&{class_name}::{task_name}, this, inPartitions, taskIdx, min_partition, max_partition, &partitionData));
+  }}
+
+
+  {tpool_name}.join();
+  {tpool_name}.stop();

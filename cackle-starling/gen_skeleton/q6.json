@@ -1,0 +1,49 @@
+{
+  "class_name": "Query6Executor",
+  "pre_initialization" : "struct tm tempDate{};",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    { "name" : "min_shipdate",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 1, 0, 95};\n  min_shipdate = mktime(&tempDate);"
+    },
+    { "name" : "max_shipdate",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 1, 0, 96};\n  max_shipdate = mktime(&tempDate);"
+    }
+    ],
+  "stages" : [
+    {
+      "stage_name" : "LineitemAggregate",
+      "type" : "BaseTableScanAggregate",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\", (taskNum + 1) ",
+      "in_columns" : [
+        ["l_quantity", "DOUBLE"],
+        ["l_extendedprice", "DOUBLE"],
+        ["l_discount", "DOUBLE"],
+        ["l_shipdate", "DATE"]
+      ],
+      "group_by_columns" : [
+        ["none" , "LONG", "NONE"]
+      ],
+      "aggregate_columns" : [
+        ["revenue", "DOUBLE"]
+      ],
+      "order_by_columns" : [
+        ["none", "LONG"]
+      ],
+      "aggregate_code" : "agg_rec.revenue += l_extendedprice * l_discount;",
+      "filter_condition" : "l_shipdate >= min_shipdate && l_shipdate < max_shipdate && l_discount >= 0.05f && l_discount <= 0.07f && l_quantity < 24.0f",
+      "reduce_aggregate" : "agg_rec.revenue+=in_agg_rec.revenue;",
+      "in_partitions_name" : "num_lineitem"
+    },
+    {
+      "stage_name" : "SortFinalAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "LineitemAggregate"
+    }
+  ]
+}

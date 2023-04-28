@@ -1,0 +1,151 @@
+{
+  "class_name": "Query17Executor",
+  "pre_initialization" : "",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    ],
+  "stages" : [
+    {
+      "stage_name" : "LineitemPartitionInner",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\", (taskNum/2 + 1) ",
+      "splits" : 2,
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["l_partkey", "LONG"],
+        ["l_quantity", "DOUBLE"]
+      ],
+      "out_columns" : [
+        ["l_partkey" , "LONG"],
+        ["l_quantity", "DOUBLE"]
+      ],
+      "partition_column" : "l_partkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_lineitem",
+      "out_partitions_name" : "pl_partitions"
+    },
+    {
+      "stage_name" : "PartPartitionInner",
+      "in_file" : "\"part/part.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["p_partkey", "LONG"],
+        ["p_brand", "STRING", 10],
+        ["p_container", "STRING", 10]
+      ],
+      "out_columns" : [
+        ["p_partkey", "LONG"]
+      ],
+      "partition_column" : "p_partkey",
+      "filter_condition" : "p_brand == \"Brand#41  \" && p_container == \"SM PACK   \"",
+      "in_partitions_name" : "num_part",
+      "out_partitions_name" : "pl_partitions"
+    },
+    {
+      "stage_name" : "PLJoinInner",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "PartPartitionInner",
+      "right_input" : "LineitemPartitionInner",
+      "pipeline" : "off",
+      "group_by_columns" : [
+        ["p_partkey", "LONG", "left"]
+      ],
+      "aggregate_columns" : [
+        ["quant_sum", "DOUBLE"],
+        ["quant_count", "DOUBLE"]
+      ],
+      "order_by_columns" : [
+      ],
+      "aggregate_code" : "agg_rec.quant_sum += right_rec.l_quantity; agg_rec.quant_count += 1;",
+      "reduce_aggregate" : "agg_rec.quant_count += in_agg_rec.quant_count; agg_rec.quant_sum += in_agg_rec.quant_sum;",
+      "partition_column" : "p_partkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "pl_partitions",
+      "out_partitions_name" : "inner_partitions"
+    },
+    {
+      "stage_name" : "SubqueryAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "PLJoinInner",
+      "partition_column" : "p_partkey",
+      "in_partitions_name" : "inner_partitions"
+    },
+    {
+      "stage_name" : "PartPartition",
+      "in_file" : "\"part/part.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["p_partkey", "LONG"],
+        ["p_brand", "STRING", 10],
+        ["p_container", "STRING", 10]
+      ],
+      "out_columns" : [
+        ["p_partkey", "LONG"]
+      ],
+      "partition_column" : "p_partkey",
+      "filter_condition" : "p_brand == \"Brand#41  \" && p_container == \"SM PACK   \"",
+      "in_partitions_name" : "num_part",
+      "out_partitions_name" : "pl_partitions"
+    },
+    {
+      "stage_name" : "PSubJoin",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "PartPartition",
+      "right_input" : "SubqueryAggregate",
+      "pipeline" : "off",
+      "out_columns" : [
+        ["quant_sum", "DOUBLE", "right"],
+        ["quant_count", "DOUBLE", "right"],
+        ["p_partkey", "LONG", "left"]
+      ],
+      "partition_column" : "p_partkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "pl_partitions",
+      "out_partitions_name" : "pl_partitions"
+    },
+    {
+      "stage_name" : "LineitemPartition",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\", (taskNum/2 + 1) ",
+      "splits" : 2,
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["l_partkey", "LONG"],
+        ["l_quantity", "DOUBLE"],
+        ["l_extendedprice", "DOUBLE"]
+      ],
+      "out_columns" : [
+        ["l_partkey", "LONG"],
+        ["l_quantity", "DOUBLE"],
+        ["l_extendedprice", "DOUBLE"]
+      ],
+      "partition_column" : "l_partkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_lineitem",
+      "out_partitions_name" : "pl_partitions"
+    },
+    {
+      "stage_name" : "PLJoin",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "PSubJoin",
+      "right_input" : "LineitemPartition",
+      "pipeline" : "off",
+      "group_by_columns" : [
+        ["none" , "LONG", "NONE"]
+      ],
+      "aggregate_columns" : [
+        ["avg_yearly", "DOUBLE"]
+      ],
+      "order_by_columns" : [
+      ],
+      "aggregate_code" : "agg_rec.avg_yearly += right_rec.l_extendedprice/7.0;",
+      "reduce_aggregate" : "agg_rec.avg_yearly += in_agg_rec.avg_yearly;",
+      "filter_condition" : "right_rec.l_quantity < (0.2*left_rec.quant_sum/left_rec.quant_count)",
+      "in_partitions_name" : "pl_partitions"
+    },
+    {
+      "stage_name" : "SortFinalAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "PLJoin"
+    }
+  ]
+}

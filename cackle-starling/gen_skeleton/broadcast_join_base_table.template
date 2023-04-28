@@ -1,0 +1,46 @@
+{tasks}
+
+void {class_name}::{stage_name}(int outPartitions, int taskNum){{
+  auto start = std::chrono::steady_clock::now();
+  int inPartitions=1;
+
+  std::unique_ptr<std::unordered_map<int64_t, std::vector<struct {left_record_type}>>> hash_map(new std::unordered_map<int64_t, std::vector<struct {left_record_type}>>);
+  std::vector<int> taskList;
+  std::vector<bool> completedTaskList(1);
+
+{build_task_launch}
+  auto endbuild = std::chrono::steady_clock::now();
+  std::cout << "done build " << std::chrono::duration_cast<std::chrono::milliseconds>(endbuild-start).count() <<  std::endl;
+
+  std::vector<SinglePartitionData> partitionData(outPartitions);
+
+  taskList.clear();
+
+{probe_task_launch}
+
+  auto endprobe = std::chrono::steady_clock::now();
+
+  auto outs = std::make_shared<std::stringstream>();
+  
+{output_dictionaries}
+
+{convert_partitioned_data}
+
+  auto end_convert = std::chrono::steady_clock::now();
+
+  auto before_write = std::chrono::steady_clock::now();
+  if (!all_cached){{
+    S3Client s3("INTERMEDIATE_BUCKET_NAME", "us-east-1", 1);
+    std::string s3Name = std::to_string(taskNum)+std::string("_pt{operator_idx}_")+query_id;
+    writeToS3(s3, s3Name, outBuf.get(), currLoc);
+  }}
+  auto after_write = std::chrono::steady_clock::now();
+  long build_time = std::chrono::duration_cast<std::chrono::milliseconds>(endbuild-start).count();
+  long probe_time = std::chrono::duration_cast<std::chrono::milliseconds>(endprobe-endbuild).count();
+  long write_time = std::chrono::duration_cast<std::chrono::milliseconds>(after_write-before_write).count();
+  long total_time = std::chrono::duration_cast<std::chrono::milliseconds>(after_write-start).count();
+  std::cout <<  total_rows << " " << total_time << " " << build_time << " " << probe_time << " " << write_time << " " << S3Client::GetNumReads() << " " << S3Client::GetNumWrites() << " " << currLoc << " " << cache.GetWrittenPartitionsStr()  << std::endl;
+
+}}
+
+

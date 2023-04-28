@@ -1,0 +1,116 @@
+{
+  "class_name": "Query16Executor",
+  "pre_initialization" : "",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    ],
+  "stages" : [
+    {
+      "stage_name" : "SupplierPartition",
+      "in_file" : "\"supplier/supplier.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["s_suppkey", "LONG"],
+        ["s_comment", "STRING", 101]
+      ],
+      "out_columns" : [
+        ["s_suppkey" , "LONG"]
+      ],
+      "partition_column" : "s_suppkey",
+      "filter_condition" : "(s_comment.find(\"Customer\") != std::string::npos && s_comment.find(\"Complaints\") != std::string::npos && s_comment.find(\"Complaints\", s_comment.find(\"Customer\")+8) != std::string::npos)",
+      "in_partitions_name" : "num_supplier",
+      "out_partitions_name" : "s_ps_partitions"
+    },
+    {
+      "stage_name" : "PartPartition",
+      "in_file" : "\"part/part.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["p_partkey", "LONG"],
+        ["p_brand", "STRING", 10],
+        ["p_type", "STRING", 25],
+        ["p_size", "LONG"]
+      ],
+      "out_columns" : [
+        ["p_partkey", "LONG"],
+        ["p_size", "LONG"],
+        ["p_brand", "STRING", 10],
+        ["p_type", "STRING", 25]
+      ],
+      "partition_column" : "p_partkey",
+      "filter_condition" : "p_brand != std::string(\"Brand#14  \") && (strncmp(p_type.c_str(), \"STANDARD BURNISHED\", 18) != 0) && (p_size == 6 || p_size == 3 || p_size == 39 || p_size == 37 || p_size == 50 || p_size == 27 || p_size == 19 || p_size == 34)",
+      "in_partitions_name" : "num_part",
+      "out_partitions_name" : "p_ps_partitions"
+    },
+    {
+      "stage_name" : "PartsuppPartition",
+      "in_file" : "\"partsupp/partsupp.tbl.%d.orc\", (taskNum/2 + 1) ",
+      "splits" : 2,
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["ps_partkey", "LONG"],
+        ["ps_suppkey", "LONG"]
+      ],
+      "out_columns" : [
+        ["ps_partkey", "LONG"],
+        ["ps_suppkey", "LONG"]
+      ],
+      "partition_column" : "ps_partkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_partsupp",
+      "out_partitions_name" : "p_ps_partitions"
+    },
+    {
+      "stage_name" : "PPsJoin",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "PartPartition",
+      "right_input" : "PartsuppPartition",
+      "pipeline" : "off",
+      "out_columns" : [
+        ["p_partkey", "LONG", "left"],
+        ["ps_suppkey", "LONG", "right"],
+        ["p_size", "LONG", "left"],
+        ["p_brand", "STRING", 10, "left"],
+        ["p_type", "STRING", 25, "left"]
+      ],
+      "partition_column" : "ps_suppkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "p_ps_partitions",
+      "out_partitions_name" : "s_ps_partitions"
+    },
+    {
+      "stage_name" : "SPsJoinAggregate",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "SupplierPartition",
+      "right_input" : "PPsJoin",
+      "pipeline" : "off",
+      "exists" : "left NOT EXISTS",
+      "group_by_columns" : [
+        ["p_size", "LONG", "right"],
+        ["ps_suppkey", "LONG", "right"],
+        ["p_brand", "STRING", 10, "right"],
+        ["p_type", "STRING", 25, "right"]
+      ],
+      "aggregate_columns" : [
+        ["supplier_cnt", "LONG"]
+      ],
+      "order_by_columns" : [
+        ["supplier_cnt", "LONG", "DESC"],
+        ["p_brand", "STRING", 10, "right"],
+        ["p_type", "STRING", 25, "right"],
+        ["p_size", "LONG", "right"]
+      ],
+      "aggregate_code" : "agg_rec.supplier_cnt = 1;",
+      "reduce_aggregate" : "agg_rec.supplier_cnt += in_agg_rec.supplier_cnt;",
+      "q16": true,
+      "filter_condition" : "true",
+      "in_partitions_name" : "s_ps_partitions"
+    },
+    {
+      "stage_name" : "PreFinalAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "SPsJoinAggregate"
+    }
+  ]
+}

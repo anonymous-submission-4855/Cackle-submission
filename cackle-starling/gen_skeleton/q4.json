@@ -1,0 +1,85 @@
+{
+  "class_name": "Query4Executor",
+  "pre_initialization" : "struct tm tempDate{};",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    { "name" : "min_orderdate",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 1, 0, 93};\n  min_orderdate = mktime(&tempDate);"
+    },
+    { "name" : "max_orderdate",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 1, 3, 93};\n  max_orderdate = mktime(&tempDate);"
+    }
+    ],
+  "stages" : [
+    {
+      "stage_name" : "LineitemPartition",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\", (taskNum/2 + 1) ",
+      "splits" : 2, 
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["l_orderkey", "LONG"],
+        ["l_commitdate", "DATE"],
+        ["l_receiptdate", "DATE"]
+      ],
+      "out_columns" : [
+        ["l_orderkey" , "LONG"]
+      ],
+      "partition_column" : "l_orderkey",
+      "filter_condition" : "(l_commitdate < l_receiptdate)",
+      "in_partitions_name" : "num_lineitem",
+      "out_partitions_name" : "ol_partitions"
+    },
+    {
+      "stage_name" : "OrdersPartition",
+      "in_file" : "\"orders/orders.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["o_orderkey", "LONG"],
+        ["o_orderdate", "DATE"],
+        ["o_orderpriority", "STRING", 15]
+      ],
+      "out_columns" : [
+        ["o_orderkey", "LONG"],
+        ["o_orderpriority", "STRING", 15, "DICT"]
+      ],
+      "partition_column" : "o_orderkey",
+      "filter_condition" : "o_orderdate >= min_orderdate && o_orderdate < max_orderdate",
+      "in_partitions_name" : "num_orders",
+      "out_partitions_name" : "ol_partitions"
+    },
+    {
+      "stage_name" : "OLJoinAggregate",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "OrdersPartition",
+      "right_input" : "LineitemPartition",
+      "pipeline" : "off",
+      "exists" : "right",
+      "group_by_columns" : [
+        ["o_orderpriority", "STRING", 15, "DICT", "left"]
+      ],
+      "aggregate_columns" : [
+        ["order_count", "LONG"]
+      ],
+      "order_by_columns" : [
+        ["o_orderpriority", "STRING", 15, "left"]
+      ],
+      "aggregate_code" : "agg_rec.order_count++;\n",
+      "reduce_aggregate" : "agg_rec.order_count += in_agg_rec.order_count;",
+      "filter_condition" : "true",
+      "in_partitions_name" : "ol_partitions"
+    },
+    {
+      "stage_name" : "SortFinalAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "OLJoinAggregate",
+      "order_by_columns" : [
+        ["o_orderpriority", "STRING", 15]
+      ]
+    }
+  ]
+}

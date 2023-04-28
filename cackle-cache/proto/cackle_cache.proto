@@ -1,0 +1,93 @@
+
+syntax = "proto3";
+package cackle_cache;
+
+service Cache {
+    rpc Push (PushRequest) returns (PushReply);
+    rpc Get (GetRequest) returns (stream GetReply);
+    rpc Drop (DropRequest) returns (DropReply);
+    rpc Clear (ClearRequest) returns (ClearReply);
+    rpc GetSize (SizeRequest) returns (SizeReply);
+    rpc Reserve (ReservationRequest) returns (ReservationReply);
+    rpc DropReservation (DropReservationRequest) returns (DropReservationReply);
+}
+
+enum CacheErrorCode{
+    OK = 0;
+    COULD_NOT_WRITE = 1;
+    MISSING_KEY = 2;
+    OTHER = 3;
+}
+
+message Partition {
+    optional uint32 in_partition = 1;
+    optional bytes header = 2;
+    optional bytes data = 3;
+}
+
+message PushRequest {
+    optional string key = 1;
+    optional Partition value = 2;
+    optional uint64 reservation_id = 3;
+}
+
+message PushReply {
+    optional CacheErrorCode err = 1;
+    optional string error = 2;
+}
+
+
+message GetRequest {
+    optional string key = 1;
+    optional bool should_drop = 2;
+}
+
+message GetReply {
+    optional CacheErrorCode err = 1;
+    optional string error = 2;
+    optional Partition value = 3;
+}
+
+message DropRequest {
+    optional string key = 1;
+    optional bool should_write = 2;
+}
+
+message DropReply {
+    optional CacheErrorCode err = 1;
+    optional string error = 2;
+}
+
+message ClearRequest {
+}
+
+message ClearReply {
+    optional CacheErrorCode err = 1;
+    optional string error = 2;
+}
+
+message SizeRequest {
+}
+
+message SizeReply {
+    optional uint64 capacity = 1;
+    optional uint64 current_size = 2;
+}
+
+message ReservationRequest {
+    optional uint64 size = 1;
+}
+
+message ReservationReply {
+    optional CacheErrorCode err = 1;
+    optional uint64 reservation_id = 2;
+    optional uint64 reserved_size = 3;
+    optional uint32 reservation_seconds = 4;
+}
+
+message DropReservationRequest {
+    optional uint64 reservation_id = 2;
+}
+
+message DropReservationReply {
+}

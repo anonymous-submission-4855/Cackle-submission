@@ -1,0 +1,61 @@
+
+  auto dict_out = outs->str();
+  outs.reset();
+
+
+  long total_rows = 0;
+  std::vector<CompressedData> compressedParts;
+  long after_size = dict_out.size() + outPartitions * 8;
+  for (int partNum = 0; partNum < outPartitions; partNum++){{
+    total_rows += partitionData.at(partNum).numRecords;
+    auto & curBuf = partitionData.at(partNum).buf;
+    after_size += curBuf.tellp();
+  }}
+  
+  uint64_t currSize = dict_out.size() + outPartitions * 8;
+  std::unique_ptr<char[]> outBuf(new char[after_size]);
+  uint64_t currLoc = 0;
+  std::memcpy(outBuf.get()+currLoc, dict_out.data(), dict_out.size());
+  currLoc += dict_out.size();
+  for (int partNum = 0; partNum < outPartitions; partNum++){{
+    auto & curBuf = partitionData.at(partNum).buf;
+    currSize += curBuf.tellp();
+    std::memcpy(outBuf.get()+currLoc, reinterpret_cast<char*>(&currSize), sizeof(currSize));
+    currLoc += sizeof(currSize);
+  }}
+
+  std::vector<std::pair<const char*, size_t>> partition_map;
+  for (int partNum = 0; partNum < outPartitions; partNum++){{
+    auto & curBuf = partitionData.at(partNum).buf;
+    auto outSize = curBuf.tellp();
+    auto outStr = curBuf.str();
+    std::memcpy(outBuf.get()+currLoc, outStr.data(), outSize);
+    partition_map.push_back(std::pair<const char*, size_t>(outBuf.get()+currLoc, outSize));
+    curBuf.str("");
+    currLoc += outSize;
+  }}
+  std::vector<bool> partitions_cached(outPartitions, false);
+  std::string cache_key = query_id+"_pt{operator_idx}_";
+  bool first_cache_read = false;
+  for (int ordinal = 0; ordinal < cacheNodesToUse ; ++ordinal){{
+    std::unordered_map<long, int> reply_map;
+    for (int partNum = 0; partNum < outPartitions; partNum++){{
+      if (partitions_cached[partNum]) {{
+        continue;
+      }}
+      auto pair = partition_map[partNum];
+      long rep_idx = cache.async_push(cache_key, taskNum, partNum, ordinal, dict_out.data(), dict_out.size(), pair.first, pair.second);
+      if (rep_idx >= 0) {{
+
+        reply_map[rep_idx] = partNum;
+      }}
+    }}
+    for (auto wait_val : reply_map) {{
+      partitions_cached[wait_val.second] = partitions_cached[wait_val.second] | cache.async_push_result(wait_val.first);
+    }}
+  }}
+  bool all_cached = true;
+  for (auto part_cached : partitions_cached) {{
+    all_cached &= part_cached;
+  }}
+

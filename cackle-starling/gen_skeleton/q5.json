@@ -1,0 +1,212 @@
+{
+  "class_name": "Query5Executor",
+  "pre_initialization" : "struct tm tempDate{};",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "compress" : "off",
+  "constants" : [
+    { "name" : "min_orderdate",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 1, 0, 94};\n  min_orderdate = mktime(&tempDate);"
+    },
+    { "name" : "max_orderdate",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 1, 0, 95};\n  max_orderdate = mktime(&tempDate);"
+    }
+    ],
+  "stages" : [
+    {
+      "stage_name" : "NRJoin",
+      "type" : "TwoBaseTableJoinPartition",
+      "left_input": {
+        "stage_name" : "NationFilter",
+        "in_file" : "\"nation/nation.tbl.%d.orc\", (taskNum + 1) ",
+        "in_columns" : [
+          ["n_nationkey", "LONG"],
+          ["n_name", "STRING", 25],
+          ["n_regionkey", "LONG"]
+        ],
+        "out_columns" : [
+          ["n_nationkey", "LONG"],
+          ["n_regionkey", "LONG"],
+          ["n_name", "STRING", 25, "DICT"]
+        ],
+        "partition_column" : "n_regionkey",
+        "filter_condition" : "true",
+        "in_partitions_name" : "num_nation",
+        "out_partitions_name" : "num_nation"
+      },
+      "right_input": {
+        "in_file" : "\"region/region.tbl.%d.orc\", (taskNum + 1) ",
+        "in_columns" : [
+          ["r_regionkey", "LONG"],
+          ["r_name", "STRING", 25]
+        ],
+        "out_columns" : [
+          ["r_regionkey" , "LONG"]
+        ],
+        "partition_column" : "r_regionkey",
+        "filter_condition" : "r_name == \"AMERICA                  \"",
+        "in_partitions_name" : "num_nation",
+        "out_partitions_name" : "num_nation"
+      },
+      "out_columns" : [
+        ["n_nationkey" , "LONG", "left"],
+        ["n_name" , "STRING", 25, "DICT", "left"]
+      ],
+      "partition_column" : "n_nationkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_nation",
+      "out_partitions_name" : "num_nation"
+    },
+    {
+      "stage_name" : "NCJoin",
+      "type" : "BroadcastJoinBaseTable",
+      "left_input" : "NRJoin",
+      "drop_left" : "false",
+      "right_input": {
+        "in_file" : "\"customer/customer.tbl.%d.orc\", (taskNum + 1) ",
+        "in_columns" : [
+          ["c_custkey" , "LONG"],
+          ["c_nationkey" , "LONG"]
+        ],
+        "out_columns" : [
+          ["c_custkey" , "LONG", "right"],
+          ["c_nationkey" , "LONG", "right"]
+        ],
+        "partition_column" : "c_nationkey",
+        "filter_condition" : "true",
+        "in_partitions_name" : "num_customer",
+        "out_partitions_name" : "num_customer"
+      },
+      "out_columns" : [
+        ["c_custkey" , "LONG", "right"],
+        ["c_nationkey" , "LONG", "right"],
+        ["n_name" , "STRING", 25, "DICT", "left"]
+      ],
+      "partition_column" : "c_custkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_customer",
+      "out_partitions_name" : "co_partitions"
+    },
+    {
+      "stage_name" : "LineitemPartition",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\", (taskNum/2 + 1) ",
+      "splits" : 2, 
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["l_orderkey", "LONG"],
+        ["l_suppkey", "LONG"],
+        ["l_extendedprice", "DOUBLE"],
+        ["l_discount", "DOUBLE"]
+      ],
+      "out_columns" : [
+        ["l_orderkey" , "LONG"],
+        ["l_suppkey" , "LONG"],
+        ["revenue", "DOUBLE", "CUSTOM", "out_rec.revenue = l_extendedprice * (1.0 - l_discount);"]
+      ],
+      "partition_column" : "l_orderkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_lineitem",
+      "out_partitions_name" : "ol_partitions"
+    },
+    {
+      "stage_name" : "OrdersPartition",
+      "in_file" : "\"orders/orders.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["o_orderkey", "LONG"],
+        ["o_custkey", "LONG"],
+        ["o_orderdate", "DATE"]
+      ],
+      "out_columns" : [
+        ["o_orderkey", "LONG"],
+        ["o_custkey", "LONG"]
+      ],
+      "partition_column" : "o_orderkey",
+      "filter_condition" : "o_orderdate >= min_orderdate && o_orderdate < max_orderdate",
+      "in_partitions_name" : "num_orders",
+      "out_partitions_name" : "ol_partitions"
+    },
+    {
+      "stage_name" : "OLJoin",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "OrdersPartition",
+      "right_input" : "LineitemPartition",
+      "split_join" : ["right", 2],
+      "drop_left" : "false",
+      "drop_right" : "false",
+      "pipeline" : "off",
+      "out_columns" : [
+        ["o_custkey", "LONG", "left"],
+        ["l_suppkey", "LONG", "right"],
+        ["revenue", "DOUBLE", "right"]
+      ],
+      "partition_column" : "o_custkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "ol_partitions",
+      "out_partitions_name" : "co_partitions"
+    },
+    {
+      "stage_name" : "COJoin",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "NCJoin",
+      "right_input" : "OLJoin",
+      "pipeline" : "off",
+      "out_columns" : [
+        ["l_suppkey", "LONG", "right"],
+        ["c_nationkey", "LONG", "left"],
+        ["revenue", "DOUBLE", "right"],
+        ["n_name", "STRING", "25", "DICT","left"]
+      ],
+      "partition_column" : "l_suppkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "co_partitions",
+      "out_partitions_name" : "sl_partitions"
+    },
+    {
+      "stage_name" : "SupplierPartition",
+      "in_file" : "\"supplier/supplier.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["s_suppkey", "LONG"],
+        ["s_nationkey", "LONG"]
+      ],
+      "out_columns" : [
+        ["s_suppkey", "LONG"],
+        ["s_nationkey", "LONG"]
+      ],
+      "partition_column" : "s_suppkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_supplier",
+      "out_partitions_name" : "sl_partitions"
+    },
+    {
+      "stage_name" : "SLJoinAggregate",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "SupplierPartition",
+      "right_input" : "COJoin",
+      "pipeline" : "off",
+      "group_by_columns" : [
+        ["n_name" , "STRING", 25, "DICT", "right"]
+      ],
+      "aggregate_columns" : [
+        ["revenue", "LONG"]
+      ],
+      "order_by_columns" : [
+        ["revenue", "LONG", "DESC"]
+      ],
+      "aggregate_code" : "agg_rec.revenue += right_rec.revenue;",
+      "filter_condition" : "left_rec.s_nationkey == right_rec.c_nationkey",
+      "reduce_aggregate" : "agg_rec.revenue+=in_agg_rec.revenue;",
+      "in_partitions_name" : "sl_partitions"
+    },
+    {
+      "stage_name" : "SortFinalAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "SLJoinAggregate"
+    }
+  ]
+}

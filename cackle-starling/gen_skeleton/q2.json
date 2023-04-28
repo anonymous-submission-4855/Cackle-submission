@@ -1,0 +1,335 @@
+{
+  "class_name": "Query2Executor",
+  "pre_initialization" : "",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    ],
+  "stages" : [
+    {
+      "stage_name" : "NRJoinInner",
+      "type" : "TwoBaseTableJoinPartition",
+      "left_input": {
+        "stage_name" : "NationFilterInner",
+        "in_file" : "\"nation/nation.tbl.%d.orc\", (taskNum + 1) ",
+        "in_columns" : [
+          ["n_nationkey", "LONG"],
+          ["n_regionkey", "LONG"]
+        ],
+        "out_columns" : [
+          ["n_nationkey", "LONG"],
+          ["n_regionkey", "LONG"]
+        ],
+        "partition_column" : "n_regionkey",
+        "filter_condition" : "true",
+        "in_partitions_name" : "num_nation",
+        "out_partitions_name" : "num_nation"
+      },
+      "right_input": {
+        "in_file" : "\"region/region.tbl.%d.orc\", (taskNum + 1) ",
+        "in_columns" : [
+          ["r_regionkey", "LONG"],
+          ["r_name", "STRING", 25]
+        ],
+        "out_columns" : [
+          ["r_regionkey" , "LONG"]
+        ],
+        "partition_column" : "r_regionkey",
+        "filter_condition" : "r_name == \"AFRICA                   \"",
+        "in_partitions_name" : "num_nation",
+        "out_partitions_name" : "num_nation"
+      },
+      "out_columns" : [
+        ["n_nationkey" , "LONG", "left"]
+      ],
+      "partition_column" : "n_nationkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_nation",
+      "out_partitions_name" : "num_nation"
+    },
+    {
+      "stage_name" : "PartPartitionInner",
+      "in_file" : "\"part/part.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["p_partkey", "LONG"],
+        ["p_type", "STRING", 25],
+        ["p_size", "LONG"]
+      ],
+      "out_columns" : [
+        ["p_partkey", "LONG"]
+      ],
+      "partition_column" : "p_partkey",
+      "filter_condition" : "p_size == 47 && p_type.find(\"NICKEL\") != std::string::npos",
+      "in_partitions_name" : "num_part",
+      "out_partitions_name" : "p_ps_partitions_inner"
+    },
+    {
+      "stage_name" : "PartsuppPartitionInner",
+      "in_file" : "\"partsupp/partsupp.tbl.%d.orc\", (taskNum/4 + 1) ",
+      "type" : "BaseTableScanPartition",
+      "splits" : 4,
+      "in_columns" : [
+        ["ps_partkey", "LONG"],
+        ["ps_suppkey", "LONG"],
+        ["ps_supplycost", "DOUBLE"]
+      ],
+      "out_columns" : [
+        ["ps_partkey", "LONG"],
+        ["ps_suppkey", "LONG"],
+        ["ps_supplycost", "DOUBLE"]
+      ],
+      "partition_column" : "ps_partkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_partsupp",
+      "out_partitions_name" : "p_ps_partitions_inner"
+    },
+    {
+      "stage_name" : "SupplierPartitionInner",
+      "in_file" : "\"supplier/supplier.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["s_suppkey", "LONG"],
+        ["s_nationkey", "LONG"]
+      ],
+      "out_columns" : [
+        ["s_suppkey", "LONG"],
+        ["s_nationkey", "LONG"]
+      ],
+      "partition_column" : "s_suppkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_supplier",
+      "out_partitions_name" : "inner_partitions"
+    }, 
+    {
+      "stage_name" : "PPsJoinInner",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "PartPartitionInner",
+      "right_input" : "PartsuppPartitionInner",
+      "pipeline" : "off",
+      "out_columns" : [
+        ["ps_supplycost", "DOUBLE", "right"],
+        ["ps_suppkey", "LONG", "right"],
+        ["p_partkey", "LONG", "left"]
+      ],
+      "partition_column" : "ps_suppkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "p_ps_partitions_inner",
+      "out_partitions_name" : "inner_partitions"
+    },
+    {
+      "stage_name" : "SPsJoinInner",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "PPsJoinInner",
+      "right_input" : "SupplierPartitionInner",
+      "pipeline" : "off",
+      "broadcast_inputs": [
+        ["NRJoinInner", "right_rec.s_nationkey", "true"]
+      ],
+      "group_by_columns" : [
+        ["p_partkey", "LONG", "left"]
+      ],
+      "aggregate_columns" : [
+        ["min_supplycost", "DOUBLE", "left"]
+      ],
+      "order_by_columns" : [
+      ],
+      "aggregate_code" : "agg_rec.min_supplycost = std::min(agg_rec.min_supplycost, left_rec.ps_supplycost);",
+      "reduce_aggregate" : "agg_rec.min_supplycost = std::min(agg_rec.min_supplycost, in_agg_rec.min_supplycost);",
+      "agg_rec_initialization" : "{DBL_MAX}",
+      "partition_column" : "p_partkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "inner_partitions",
+      "out_partitions_name" : "inner_partitions"
+    },
+    {
+      "stage_name" : "SubqueryAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "SPsJoinInner",
+      "partition_column" : "p_partkey",
+      "in_partitions_name" : "inner_partitions"
+    },
+    {
+      "stage_name" : "NRJoin",
+      "type" : "TwoBaseTableJoinPartition",
+      "left_input": {
+        "stage_name" : "NationFilter",
+        "in_file" : "\"nation/nation.tbl.%d.orc\", (taskNum + 1) ",
+        "in_columns" : [
+          ["n_nationkey", "LONG"],
+          ["n_name", "STRING", 25],
+          ["n_regionkey", "LONG"]
+        ],
+        "out_columns" : [
+          ["n_nationkey", "LONG"],
+          ["n_regionkey", "LONG"],
+          ["n_name", "STRING", 25]
+        ],
+        "partition_column" : "n_regionkey",
+        "filter_condition" : "true",
+        "in_partitions_name" : "num_nation",
+        "out_partitions_name" : "num_nation"
+      },
+      "right_input": {
+        "in_file" : "\"region/region.tbl.%d.orc\", (taskNum + 1) ",
+        "in_columns" : [
+          ["r_regionkey", "LONG"],
+          ["r_name", "STRING", 25]
+        ],
+        "out_columns" : [
+          ["r_regionkey" , "LONG"]
+        ],
+        "partition_column" : "r_regionkey",
+        "filter_condition" : "r_name == \"AFRICA                   \"",
+        "in_partitions_name" : "num_nation",
+        "out_partitions_name" : "num_nation"
+      },
+      "out_columns" : [
+        ["n_nationkey" , "LONG", "left"],
+        ["n_name", "STRING", 25, "left"]
+      ],
+      "partition_column" : "n_nationkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_nation",
+      "out_partitions_name" : "num_nation"
+    },
+    {
+      "stage_name" : "PartPartition",
+      "in_file" : "\"part/part.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["p_partkey", "LONG"],
+        ["p_mfgr", "STRING", 25],
+        ["p_type", "STRING", 25],
+        ["p_size", "LONG"]
+      ],
+      "out_columns" : [
+        ["p_partkey", "LONG"],
+        ["p_mfgr", "STRING", 25]
+      ],
+      "partition_column" : "p_partkey",
+      "filter_condition" : "p_size == 47 && p_type.find(\"NICKEL\") != std::string::npos",
+      "in_partitions_name" : "num_part",
+      "out_partitions_name" : "p_sub_partitions"
+    },
+    {
+      "stage_name" : "PSubJoin",
+      "pipeline" : "off",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "SubqueryAggregate",
+      "right_input" : "PartPartition",
+      "out_columns" : [
+        ["min_supplycost", "DOUBLE", "left"],
+        ["p_partkey", "LONG", "right"],
+        ["p_mfgr", "STRING", 25, "right"]
+      ],
+      "partition_column" : "p_partkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "p_sub_partitions",
+      "out_partitions_name" : "p_ps_partitions"
+    },
+    {
+      "stage_name" : "PartsuppPartition",
+      "in_file" : "\"partsupp/partsupp.tbl.%d.orc\", (taskNum/4 + 1) ",
+      "splits" : 4,
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["ps_partkey", "LONG"],
+        ["ps_suppkey", "LONG"],
+        ["ps_supplycost", "DOUBLE"]
+      ],
+      "out_columns" : [
+        ["ps_partkey", "LONG"],
+        ["ps_suppkey", "LONG"],
+        ["ps_supplycost", "DOUBLE"]
+      ],
+      "partition_column" : "ps_partkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_partsupp",
+      "out_partitions_name" : "p_ps_partitions"
+    },
+    {
+      "stage_name" : "PPsJoin",
+      "pipeline" : "off",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "PSubJoin",
+      "right_input" : "PartsuppPartition",
+      "out_columns" : [
+        ["ps_supplycost", "DOUBLE", "right"],
+        ["ps_suppkey", "LONG", "right"],
+        ["p_partkey", "LONG", "left"],
+        ["p_mfgr", "STRING", 25, "left"]
+      ],
+      "partition_column" : "ps_suppkey",
+      "filter_condition" : "right_rec.ps_supplycost == left_rec.min_supplycost",
+      "in_partitions_name" : "p_ps_partitions",
+      "out_partitions_name" : "s_ps_partitions"
+    },
+    {
+      "stage_name" : "SupplierPartition",
+      "in_file" : "\"supplier/supplier.tbl.%d.orc\", (taskNum/2 + 1) ",
+      "splits" : 2,
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["s_suppkey", "LONG"],
+        ["s_name", "STRING", 25],
+        ["s_address", "STRING", 40],
+        ["s_nationkey", "LONG"],
+        ["s_phone", "STRING", 15],
+        ["s_acctbal", "DOUBLE"],
+        ["s_comment", "STRING", 101]
+      ],
+      "out_columns" : [
+        ["s_suppkey", "LONG"],
+        ["s_nationkey", "LONG"],
+        ["s_acctbal", "DOUBLE"],
+        ["s_name", "STRING", 25],
+        ["s_address", "STRING", 40],
+        ["s_phone", "STRING", 15],
+        ["s_comment", "STRING", 101]
+      ],
+      "partition_column" : "s_suppkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_supplier",
+      "out_partitions_name" : "s_ps_partitions"
+    },
+    {
+      "stage_name" : "SPsJoin",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "PPsJoin",
+      "right_input" : "SupplierPartition",
+      "pipeline" : "off",
+      "broadcast_inputs": [
+        ["NRJoin", "right_rec.s_nationkey", "true"]
+      ],
+      "group_by_columns" : [
+        ["s_acctbal", "DOUBLE", "right"],
+        ["p_partkey", "LONG", "left"],
+        ["s_name", "STRING", 25, "right"],
+        ["n_name", "STRING", 25, "bcast_rec1"],
+        ["p_mfgr", "STRING", 25, "left"],
+        ["s_address", "STRING", 40, "right"],
+        ["s_phone", "STRING", 15, "right"],
+        ["s_comment", "STRING", 101, "right"]
+      ],
+      "aggregate_columns" : [
+      ],
+      "order_by_columns" : [
+        ["s_acctbal", "DOUBLE", "DESC"],
+        ["n_name", "STRING", 25],
+        ["s_name", "STRING", 25],
+        ["p_partkey", "LONG"]
+      ],
+      "limit" : 100,
+      "aggregate_code" : "",
+      "reduce_aggregate" : "",
+      "filter_condition" : "true",
+      "in_partitions_name" : "s_ps_partitions"
+    },
+    {
+      "stage_name" : "FinalAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "SPsJoin"
+    }
+  ]
+}

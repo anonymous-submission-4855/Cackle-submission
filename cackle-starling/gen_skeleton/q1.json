@@ -1,0 +1,57 @@
+{
+  "class_name": "Query1Executor",
+  "pre_initialization" : "struct tm tempDate{};",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    { "name" : "max_shipdate",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 6, 7, 98};\n  max_shipdate = mktime(&tempDate);"
+    }
+    ],
+  "stages" : [
+    {
+      "stage_name" : "LineitemAggregate",
+      "type" : "BaseTableScanAggregate",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\", (taskNum + 1) ",
+      "in_columns" : [
+        ["l_quantity", "DOUBLE"],
+        ["l_extendedprice", "DOUBLE"],
+        ["l_discount", "DOUBLE"],
+        ["l_tax", "DOUBLE"],
+        ["l_returnflag", "STRING", 1],
+        ["l_linestatus", "STRING", 1],
+        ["l_shipdate", "DATE"]
+      ],
+      "group_by_columns" : [
+        ["l_returnflag", "STRING", 1],
+        ["l_linestatus", "STRING", 1]
+      ],
+      "aggregate_columns" : [
+        ["sum_qty", "DOUBLE"],
+        ["sum_base_price", "DOUBLE"],
+        ["sum_disc_price", "DOUBLE"],
+        ["sum_charge", "DOUBLE"],
+        ["avg_qty", "DOUBLE"],
+        ["avg_price", "DOUBLE"],
+        ["avg_disc", "DOUBLE"],
+        ["count_order", "LONG"]
+      ],
+      "order_by_columns" : [
+        ["l_returnflag", "STRING", 1],
+        ["l_linestatus", "STRING", 1]
+      ],
+      "aggregate_code" : "agg_rec.sum_qty += l_quantity;\nagg_rec.sum_base_price += l_extendedprice;\nagg_rec.sum_disc_price += l_extendedprice * (1 - l_discount);\nagg_rec.sum_charge += l_extendedprice * (1 - l_discount) * (1 + l_tax);\n agg_rec.avg_qty += l_quantity;\n agg_rec.avg_price += l_extendedprice;\nagg_rec.avg_disc += l_discount;\nagg_rec.count_order ++;\n",
+      "reduce_aggregate" : "agg_rec.sum_qty += in_agg_rec.sum_qty;\nagg_rec.sum_base_price += in_agg_rec.sum_base_price;\nagg_rec.sum_disc_price += in_agg_rec.sum_disc_price;\nagg_rec.sum_charge += in_agg_rec.sum_charge;\n agg_rec.avg_qty += in_agg_rec.avg_qty;\n agg_rec.avg_price += in_agg_rec.avg_price;\nagg_rec.avg_disc += in_agg_rec.avg_disc;\nagg_rec.count_order += in_agg_rec.count_order;\n",
+      "filter_condition" : "l_shipdate <= max_shipdate",
+      "in_partitions_name" : "num_lineitem"
+    },
+    {
+      "stage_name" : "SortFinalAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "LineitemAggregate",
+      "finalize_out_rec" : "rec.avg_qty /= rec.count_order;\nrec.avg_price/=rec.count_order;\nrec.avg_disc/=rec.count_order;\n"
+    }
+  ]
+}

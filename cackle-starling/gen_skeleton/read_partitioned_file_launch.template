@@ -1,0 +1,35 @@
+  currNumThreads = std::min(maxNumThreads, {numInFiles});
+  boost::asio::thread_pool {tpool_name}(currNumThreads);
+  
+
+  std::srand(taskNum);
+  taskList.clear();
+  completedTaskList.clear();
+
+  for (int ordinal = 0; ordinal < cacheNodesToUse; ++ordinal) {{
+    grpc::ClientContext ctx;
+    auto reader = cache.get(ctx, query_id, {in_operator_idx}, {cache_read_idx}/{task_divisor}, ordinal, {should_drop});
+    auto reply = GetReplyPtr(new cackle_cache::GetReply);
+    while (reader && reader->Read(reply.get())) {{
+      auto taskIdx = reply->value().in_partition();
+      boost::asio::post({tpool_name}, boost::bind(&{class_name}::{task_name}, this, {in_partitions}, taskIdx, {in_partition_id}/{task_divisor}, std::move(reply){params}));
+      reply.reset(new cackle_cache::GetReply);
+      completedTaskList[taskIdx] = true;
+    }}
+  }}
+
+  for (int idx = {start_idx}; idx < {numInFiles}; idx+={jump_idx}){{
+    if (!completedTaskList[idx]){{
+      taskList.push_back(idx);
+    }}
+  }}
+
+  std::random_shuffle(taskList.begin(), taskList.end());
+
+  for (int taskIdx : taskList){{
+    boost::asio::post({tpool_name}, boost::bind(&{class_name}::{task_name}, this, {in_partitions}, taskIdx, {in_partition_id}/{task_divisor}, nullptr{params}));
+  }}
+
+
+  {tpool_name}.join();
+  {tpool_name}.stop();

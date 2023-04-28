@@ -1,0 +1,28 @@
+#include <{class_name}.h>
+#include <regex>
+#include <snappy.h>
+#include <float.h>
+
+
+using namespace starling;
+
+{stage_implementations}
+
+{class_name}::{class_name}(){{
+  cacheNodesToUse = 3;
+  maxNumThreads = 16;
+  currNumThreads = 1;
+  {pre_initialization}
+{initialization}
+}}
+
+int {class_name}::handleRequest(int argc, char **argv){{
+  {parse_args}
+
+  switch(requestType){{
+{request_type_switch}
+  }}
+  return 0;
+}}
+
+

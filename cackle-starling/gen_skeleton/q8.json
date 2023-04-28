@@ -1,0 +1,262 @@
+{
+  "class_name": "Query8Executor",
+  "pre_initialization" : "struct tm tempDate{};",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    { "name" : "min_orderdate",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 1, 0, 95};\n  min_orderdate = mktime(&tempDate);"
+    },
+    { "name" : "max_orderdate",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 31, 11, 96};\n  max_orderdate = mktime(&tempDate);"
+    }
+    ],
+  "stages" : [
+    {
+      "stage_name" : "NRJoin",
+      "type" : "TwoBaseTableJoinPartition",
+      "left_input": {
+        "stage_name" : "N1Filter",
+        "in_file" : "\"nation/nation.tbl.%d.orc\", (taskNum + 1) ",
+        "alias" : "n1",
+        "in_columns" : [
+          ["n_nationkey", "LONG"],
+          ["n_regionkey", "LONG"]
+        ],
+        "out_columns" : [
+          ["n1_n_nationkey", "LONG"],
+          ["n1_n_regionkey", "LONG"]
+        ],
+        "partition_column" : "n1_n_regionkey",
+        "filter_condition" : "true",
+        "in_partitions_name" : "num_nation",
+        "out_partitions_name" : "num_nation"
+      },
+      "right_input": {
+        "in_file" : "\"region/region.tbl.%d.orc\", (taskNum + 1) ",
+        "in_columns" : [
+          ["r_regionkey", "LONG"],
+          ["r_name", "STRING", 25]
+        ],
+        "out_columns" : [
+          ["r_regionkey" , "LONG"]
+        ],
+        "partition_column" : "r_regionkey",
+        "filter_condition" : "r_name == \"MIDDLE EAST              \"",
+        "in_partitions_name" : "num_region",
+        "out_partitions_name" : "num_region"
+      },
+      "out_columns" : [
+        ["n1_n_nationkey" , "LONG", "left"]
+      ],
+      "partition_column" : "n1_n_nationkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_nation",
+      "out_partitions_name" : "num_nation"
+    },
+    {
+      "stage_name" : "NCJoin",
+      "type" : "BroadcastJoinBaseTable",
+      "left_input" : "NRJoin",
+      "right_input": {
+        "in_file" : "\"customer/customer.tbl.%d.orc\", (taskNum + 1) ",
+        "in_columns" : [
+          ["c_custkey" , "LONG"],
+          ["c_nationkey" , "LONG"]
+        ],
+        "out_columns" : [
+          ["c_custkey" , "LONG"]
+        ],
+        "partition_column" : "c_nationkey",
+        "filter_condition" : "true",
+        "in_partitions_name" : "num_customer",
+        "out_partitions_name" : "num_customer"
+      },
+      "out_columns" : [
+        ["c_custkey" , "LONG", "right"]
+      ],
+      "partition_column" : "c_custkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_customer",
+      "out_partitions_name" : "co_partitions"
+    },
+    {
+      "stage_name" : "PartPartition",
+      "in_file" : "\"part/part.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["p_partkey", "LONG"],
+        ["p_type", "STRING", 25]
+      ],
+      "out_columns" : [
+        ["p_partkey", "LONG"]
+      ],
+      "partition_column" : "p_partkey",
+      "filter_condition" : "p_type == \"MEDIUM BURNISHED NICKEL\"",
+      "in_partitions_name" : "num_part",
+      "out_partitions_name" : "pl_partitions"
+    },
+    {
+      "stage_name" : "LineitemPartition",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\", (taskNum/2 + 1) ",
+      "splits" : 2, 
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["l_orderkey", "LONG"],
+        ["l_partkey", "LONG"],
+        ["l_suppkey", "LONG"],
+        ["l_extendedprice", "DOUBLE"],
+        ["l_discount", "DOUBLE"]
+      ],
+      "out_columns" : [
+        ["l_orderkey", "LONG"],
+        ["l_partkey", "LONG"],
+        ["l_suppkey", "LONG"],
+        ["l_extendedprice", "DOUBLE"],
+        ["l_discount", "DOUBLE"]
+      ],
+      "partition_column" : "l_partkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_lineitem",
+      "out_partitions_name" : "pl_partitions"
+    },
+    {
+      "stage_name" : "PLJoin",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "PartPartition",
+      "right_input" : "LineitemPartition",
+      "out_columns" : [
+        ["l_orderkey", "LONG", "right"],
+        ["l_suppkey", "LONG", "right"],
+        ["l_extendedprice", "DOUBLE", "right"],
+        ["l_discount", "DOUBLE", "right"]
+      ],
+      "partition_column" : "l_orderkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "pl_partitions",
+      "out_partitions_name" : "lo_partitions"
+    },
+    {
+      "stage_name" : "OrdersPartition",
+      "in_file" : "\"orders/orders.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["o_orderkey", "LONG"],
+        ["o_custkey", "LONG"],
+        ["o_orderdate", "DATE"]
+      ],
+      "out_columns" : [
+        ["o_orderkey", "LONG"],
+        ["o_custkey", "LONG"],
+        ["o_year", "LONG", "CUSTOM", "struct tm temp_tm; localtime_r(&o_orderdate, &temp_tm); out_rec.o_year = temp_tm.tm_year + 1900; \n"]
+      ],
+      "partition_column" : "o_orderkey",
+      "filter_condition" : "o_orderdate >= min_orderdate && o_orderdate <= max_orderdate",
+      "in_partitions_name" : "num_orders",
+      "out_partitions_name" : "lo_partitions"
+    },
+    {
+      "stage_name" : "OLJoin",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "PLJoin",
+      "right_input" : "OrdersPartition",
+      "out_columns" : [
+        ["o_year", "LONG", "right"],
+        ["o_custkey", "LONG", "right"],
+        ["l_suppkey", "LONG", "left"],
+        ["l_extendedprice", "DOUBLE", "left"],
+        ["l_discount", "DOUBLE", "left"]
+      ],
+      "partition_column" : "o_custkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "lo_partitions",
+      "out_partitions_name" : "co_partitions"
+    },
+    {
+      "stage_name" : "COJoin",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "NCJoin",
+      "right_input" : "OLJoin",
+      "out_columns" : [
+        ["o_year", "LONG", "right"],
+        ["l_suppkey", "LONG", "right"],
+        ["l_extendedprice", "DOUBLE", "right"],
+        ["l_discount", "DOUBLE", "right"]
+      ],
+      "partition_column" : "l_suppkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "co_partitions",
+      "out_partitions_name" : "sl_partitions"
+    },
+    {
+      "stage_name" : "SupplierPartition",
+      "in_file" : "\"supplier/supplier.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["s_suppkey", "LONG"],
+        ["s_nationkey", "LONG"]
+      ],
+      "out_columns" : [
+        ["s_suppkey", "LONG"],
+        ["s_nationkey", "LONG"]
+      ],
+      "partition_column" : "s_suppkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_supplier",
+      "out_partitions_name" : "sl_partitions"
+    },
+    {
+      "stage_name" : "N2Filter",
+      "in_file" : "\"nation/nation.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "alias" : "n2",
+      "in_columns" : [
+        ["n_nationkey", "LONG"],
+        ["n_name", "STRING", 25]
+      ],
+      "out_columns" : [
+        ["n2_n_nationkey", "LONG"],
+        ["n2_n_name", "STRING", 25]
+      ],
+      "partition_column" : "n2_n_nationkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_nation",
+      "out_partitions_name" : "num_nation"
+    },
+    {
+      "stage_name" : "SLJoinAggregate",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "SupplierPartition",
+      "right_input" : "COJoin",
+      "broadcast_inputs" : [
+        ["N2Filter", "left_rec.s_nationkey", "true"]
+      ],
+      "group_by_columns" : [
+        ["o_year" , "LONG", "right"]
+      ],
+      "aggregate_columns" : [
+        ["mkt_share", "DOUBLE"],
+        ["egypt_volume", "DOUBLE"],
+        ["volume", "DOUBLE"]
+
+      ],
+      "order_by_columns" : [
+        ["o_year", "LONG"]
+      ],
+      "aggregate_code" : "agg_rec.egypt_volume += (strncmp(bcast_rec1.n2_n_name, \"EGYPT\", 5) == 0 )? right_rec.l_extendedprice *(1.0-right_rec.l_discount) : 0.0;\nagg_rec.volume += right_rec.l_extendedprice *(1.0-right_rec.l_discount);\n",
+      "reduce_aggregate" : "agg_rec.egypt_volume+=in_agg_rec.egypt_volume;\nagg_rec.volume += in_agg_rec.volume;",
+      "filter_condition" : "true",
+      "in_partitions_name" : "sl_partitions"
+    },
+    {
+      "stage_name" : "SortFinalAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "SLJoinAggregate",
+      "finalize_out_rec" : "rec.mkt_share = rec.egypt_volume/rec.volume;\nrec.volume =0;\nrec.egypt_volume=0;"
+    }
+  ]
+}

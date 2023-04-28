@@ -1,0 +1,111 @@
+{tasks}
+
+void {class_name}::{stage_name}(int numLeftFiles, int numRightFiles, int inPartitions,{out_partitions_param} int taskNum){{
+  auto start = std::chrono::steady_clock::now();
+  std::vector<int> taskList;
+  std::vector<bool> completedTaskList(numLeftFiles);
+
+  std::unique_ptr<std::unordered_map<int64_t, std::vector<struct {left_record_type}>>> hash_map(new std::unordered_map<int64_t, std::vector<struct {left_record_type}>>);
+  std::unique_ptr<std::unordered_map<struct {group_by_type}, struct {aggregate_type}>> agg_map(new std::unordered_map<struct {group_by_type}, struct {aggregate_type}>);
+
+  {broadcast_tables}
+
+  {build_task_launch}
+
+  taskList.clear();
+  auto endbuild = std::chrono::steady_clock::now();
+
+  {probe_task_launch}
+
+  auto endprobe = std::chrono::steady_clock::now();
+  //write partitions to file
+
+  std::vector<struct {output_type}> output_list[{num_partitions}];
+  
+  {count_distinct}
+  
+  for (auto &it : *agg_map){{
+    {output_type} out_rec;
+    std::memcpy(reinterpret_cast<char*>(&out_rec),reinterpret_cast<const char*>(&it.second), {request_name}_AGG_RECORD_SIZE);
+    std::memcpy(reinterpret_cast<char*>(&out_rec)+{request_name}_AGG_RECORD_SIZE,reinterpret_cast<const char*>(&it.first), {request_name}_GROUP_BY_RECORD_SIZE);
+    //get partition here
+    int partition_num = 0;
+    {set_partition}
+    output_list[partition_num].push_back(out_rec);
+  }}
+  long int curr_write_loc = 0;
+  long int partition_start_loc = {num_partitions} * sizeof(long);
+  long total_rows = 0;
+  auto outs = std::make_shared<std::stringstream>();
+  for (int partition = 0; partition < {num_partitions}; ++partition){{
+    std::sort(output_list[partition].begin(), output_list[partition].end(), {output_type}::compareTwo);
+    long agg_rows = std::min((long)output_list[partition].size(), {limit});
+    partition_start_loc += agg_rows*{request_name}_RECORD_SIZE;
+    curr_write_loc += sizeof(long);
+    outs->write(reinterpret_cast<char*>(&partition_start_loc), sizeof(agg_rows));
+  }}
+  std::vector<long> partition_locs;
+  partition_locs.push_back(outs->tellp());
+  for (int partition = 0; partition < {num_partitions}; ++partition){{
+    long partition_rows = 0;
+    for (auto &rec : output_list[partition]){{
+      if (!({having_condition})){{
+        continue;
+      }}
+      outs->write(reinterpret_cast<const char*>(&rec), {request_name}_RECORD_SIZE);
+      curr_write_loc += {request_name}_RECORD_SIZE;
+      partition_rows++;
+      total_rows++;
+      if (partition_rows == {limit}){{
+        break;
+      }}
+    }}
+    partition_locs.push_back(outs->tellp());
+  }}
+
+  auto end_convert = std::chrono::steady_clock::now();
+
+  auto before_write = std::chrono::steady_clock::now();
+  auto outstr = outs->str();
+  std::vector<bool> partitions_cached({num_partitions}, false);
+  std::string cache_key = query_id+"_pt{operator_idx}_";
+  bool first_cache_read = false;
+  for (int ordinal = 0; ordinal < cacheNodesToUse ; ++ordinal){{
+    std::unordered_map<long, int> reply_map;
+    for (int partNum = 0; partNum < {num_partitions}; partNum++){{
+      if (partitions_cached[partNum]) {{
+        continue;
+      }}
+      auto start_loc = partition_locs[partNum];
+      auto end_loc = partition_locs[partNum+1];
+      auto partition_len = end_loc-start_loc;
+      long rep_idx = cache.async_push(cache_key, taskNum, partNum, ordinal, nullptr, 0, outstr.data()+start_loc, partition_len);
+      if (rep_idx >= 0) {{
+
+        reply_map[rep_idx] = partNum;
+      }}
+    }}
+    for (auto wait_val : reply_map) {{
+      partitions_cached[wait_val.second] = partitions_cached[wait_val.second] | cache.async_push_result(wait_val.first);
+    }}
+  }}
+  bool all_cached = true;
+  for (auto part_cached : partitions_cached) {{
+    all_cached &= part_cached;
+  }}
+
+  if (!all_cached){{
+    S3Client s3("INTERMEDIATE_BUCKET_NAME", "us-east-1", 1);
+    std::string s3Name = std::to_string(taskNum)+std::string("_pt{operator_idx}_")+query_id;
+    writeToS3(s3, s3Name, outstr.data(), outstr.size());
+  }}
+  auto after_write = std::chrono::steady_clock::now();
+  long build_time = std::chrono::duration_cast<std::chrono::milliseconds>(endbuild-start).count();
+  long probe_time = std::chrono::duration_cast<std::chrono::milliseconds>(endprobe-endbuild).count();
+  long write_time = std::chrono::duration_cast<std::chrono::milliseconds>(after_write-before_write).count();
+  long total_time = std::chrono::duration_cast<std::chrono::milliseconds>(after_write-start).count();
+  std::cout << total_rows << " " << total_time << " " << build_time << " " << probe_time << " " << write_time << " " << S3Client::GetNumReads() << " " << S3Client::GetNumWrites() << " " << outstr.size() << " " << cache.GetWrittenPartitionsStr()  << std::endl;
+
+}}
+
+

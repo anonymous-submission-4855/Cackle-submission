@@ -1,0 +1,198 @@
+{
+  "class_name": "Query11Executor",
+  "pre_initialization" : "",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    ],
+ "stages" : [
+      {
+        "stage_name" : "NationFilterInner",
+        "type" : "BaseTableScanPartition",
+        "in_file" : "\"nation/nation.tbl.%d.orc\", (taskNum + 1) ",
+        "in_columns" : [
+          ["n_nationkey", "LONG"],
+          ["n_name", "STRING", 25]
+        ],
+        "out_columns" : [
+          ["n_nationkey", "LONG"]
+        ],
+        "partition_column" : "n_nationkey",
+        "filter_condition" : "n_name == \"JAPAN                    \"",
+        "in_partitions_name" : "num_nation",
+        "out_partitions_name" : "num_nation"
+      },
+    {
+      "stage_name" : "NSJoinInner",
+      "type" : "BroadcastJoinBaseTable",
+      "left_input" : "NationFilterInner",
+      "right_input": {
+        "in_file" : "\"supplier/supplier.tbl.%d.orc\", (taskNum + 1) ",
+        "in_columns" : [
+          ["s_suppkey" , "LONG"],
+          ["s_nationkey" , "LONG"]
+        ],
+        "out_columns" : [
+          ["s_suppkey" , "LONG"],
+          ["s_nationkey" , "LONG"]
+        ],
+        "partition_column" : "s_nationkey",
+        "filter_condition" : "true",
+        "in_partitions_name" : "num_supplier",
+        "out_partitions_name" : "num_supplier"
+      },
+      "out_columns" : [
+        ["s_suppkey" , "LONG", "right"]
+      ],
+      "partition_column" : "s_suppkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_supplier",
+      "out_partitions_name" : "s_ps_partitions_inner"
+    },
+    {
+      "stage_name" : "PartsuppPartitionInner",
+      "in_file" : "\"partsupp/partsupp.tbl.%d.orc\", (taskNum/3 + 1) ",
+      "type" : "BaseTableScanPartition",
+      "splits" : 3,
+      "pipeline" : "off",
+      "in_columns" : [
+        ["ps_suppkey", "LONG"],
+        ["ps_availqty", "LONG"],
+        ["ps_supplycost", "DOUBLE"]
+      ],
+      "out_columns" : [
+        ["ps_suppkey", "LONG"],
+        ["ps_availqty", "LONG"],
+        ["ps_supplycost", "DOUBLE"]
+      ],
+      "partition_column" : "ps_suppkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_partsupp",
+      "out_partitions_name" : "p_ps_partitions_inner"
+    },
+    {
+      "stage_name" : "PPsJoinAggregateInner",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "NSJoinInner",
+      "right_input" : "PartsuppPartitionInner",
+      "pipeline" : "off",
+      "group_by_columns" : [
+        ["none", "LONG", "NONE"]
+      ],
+      "aggregate_columns" : [
+        ["sum", "DOUBLE"]
+      ],
+      "order_by_columns" : [
+        ["none", "LONG"]
+      ],
+      "aggregate_code" : "agg_rec.sum += (right_rec.ps_supplycost*right_rec.ps_availqty);",
+      "reduce_aggregate" : "agg_rec.sum+=in_agg_rec.sum;\n",
+      "filter_condition" : "true",
+      "in_partitions_name" : "p_ps_partitions_inner"
+    },
+    {
+      "stage_name" : "FinalAggregateInner",
+      "type" : "FinalAggregate",
+      "finalize_out_rec" : "rec.sum *= 0.000001;",
+      "partition_column" : "none",
+      "in_operator" : "PPsJoinAggregateInner"
+
+    },
+      {
+        "stage_name" : "NationFilter",
+        "type" : "BaseTableScanPartition",
+        "in_file" : "\"nation/nation.tbl.%d.orc\", (taskNum + 1) ",
+        "in_columns" : [
+          ["n_nationkey", "LONG"],
+          ["n_name", "STRING", 25]
+        ],
+        "out_columns" : [
+          ["n_nationkey", "LONG"]
+        ],
+        "partition_column" : "n_nationkey",
+        "filter_condition" : "n_name == \"JAPAN                    \"",
+        "in_partitions_name" : "num_nation",
+        "out_partitions_name" : "num_nation"
+      },
+    {
+      "stage_name" : "NSJoin",
+      "type" : "BroadcastJoinBaseTable",
+      "left_input" : "NationFilter",
+      "right_input": {
+        "in_file" : "\"supplier/supplier.tbl.%d.orc\", (taskNum + 1) ",
+        "in_columns" : [
+          ["s_suppkey" , "LONG"],
+          ["s_nationkey" , "LONG"]
+        ],
+        "out_columns" : [
+          ["s_suppkey" , "LONG"],
+          ["s_nationkey" , "LONG"]
+        ],
+        "partition_column" : "s_nationkey",
+        "filter_condition" : "true",
+        "in_partitions_name" : "num_supplier",
+        "out_partitions_name" : "num_supplier"
+      },
+      "out_columns" : [
+        ["s_suppkey" , "LONG", "right"]
+      ],
+      "partition_column" : "s_suppkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_supplier",
+      "out_partitions_name" : "s_ps_partitions"
+    },
+    {
+      "stage_name" : "PartsuppPartition",
+      "in_file" : "\"partsupp/partsupp.tbl.%d.orc\", (taskNum/3 + 1) ",
+      "splits" : 3,
+      "type" : "BaseTableScanPartition",
+      "pipeline" : "off",
+      "in_columns" : [
+        ["ps_partkey", "LONG"],
+        ["ps_suppkey", "LONG"],
+        ["ps_availqty", "LONG"],
+        ["ps_supplycost", "DOUBLE"]
+      ],
+      "out_columns" : [
+        ["ps_partkey", "LONG"],
+        ["ps_suppkey", "LONG"],
+        ["ps_availqty", "LONG"],
+        ["ps_supplycost", "DOUBLE"]
+      ],
+      "partition_column" : "ps_suppkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_partsupp",
+      "out_partitions_name" : "p_ps_partitions"
+    },
+    {
+      "stage_name" : "PPsJoinAggregate",
+      "type" : "PartitionedHashJoinAggregate",
+      "pipeline" : "off",
+      "left_input" : "NSJoin",
+      "right_input" : "PartsuppPartition",
+      "broadcast_inputs" : [
+        ["FinalAggregateInner", "0", "true"]
+      ],
+      "group_by_columns" : [
+        ["ps_partkey", "LONG", "right"]
+      ],
+      "aggregate_columns" : [
+        ["value", "DOUBLE"],
+        ["sum", "DOUBLE"]
+      ],
+      "order_by_columns" : [
+        ["value", "DOUBLE", "DESC"]
+      ],
+      "aggregate_code" : "agg_rec.value += (right_rec.ps_supplycost*right_rec.ps_availqty);\n agg_rec.sum = bcast_rec1.sum;",
+      "reduce_aggregate" : "agg_rec.value+=in_agg_rec.value;\n agg_rec.sum = in_agg_rec.sum;",
+      "filter_condition" : "true",
+      "in_partitions_name" : "p_ps_partitions"
+    },
+    {
+      "stage_name" : "FinalAggregate",
+      "type" : "FinalAggregate",
+      "having_condition" : "rec.value > rec.sum",
+      "in_operator" : "PPsJoinAggregate"
+    }
+  ]
+}

@@ -1,0 +1,167 @@
+{
+  "class_name": "Query18Executor",
+  "pre_initialization" : "struct tm tempDate{};",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    ],
+  "stages" : [
+    {
+      "stage_name" : "LineitemAggregateInner",
+      "type" : "BaseTableScanAggregate",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\", (taskNum + 1) ",
+      "in_columns" : [
+        ["l_orderkey", "LONG"],
+        ["l_quantity", "DOUBLE"]
+      ],
+      "group_by_columns" : [
+        ["l_orderkey", "LONG"]
+      ],
+      "aggregate_columns" : [
+        ["quantity_sum", "DOUBLE"]
+      ],
+      "order_by_columns" : [
+      ],
+      "aggregate_code" : "agg_rec.quantity_sum += l_quantity;",
+      "reduce_aggregate" : "agg_rec.quantity_sum += in_agg_rec.quantity_sum;",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_lineitem",
+      "out_partitions_name" : "inner_partitions",
+      "partition_column" : "l_orderkey"
+    },
+    {
+      "stage_name" : "InnerFinalAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "LineitemAggregateInner",
+      "in_partitions_name" : "inner_partitions",
+      "having_condition" : "rec.quantity_sum > 312.0",
+      "partition_column" : "l_orderkey"
+    },
+    {
+      "stage_name" : "OrdersPartition",
+      "type" : "BaseTableScanPartition",
+      "in_file" : "\"orders/orders.tbl.%d.orc\", (taskNum/2 + 1) ",
+      "splits" : 2,
+      "in_columns" : [
+        ["o_orderkey", "LONG"],
+        ["o_custkey", "LONG"],
+        ["o_totalprice", "DOUBLE"],
+        ["o_orderdate", "DATE"]
+      ],
+      "out_columns" : [
+        ["o_orderkey", "LONG"],
+        ["o_custkey", "LONG"],
+        ["o_totalprice", "DOUBLE"],
+        ["o_orderdate", "DATE"]
+      ],
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_orders",
+      "out_partitions_name" : "in_o_partitions",
+      "partition_column" : "o_orderkey"
+    },
+    {
+      "stage_name" : "InOAggregate",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "InnerFinalAggregate",
+      "right_input" : "OrdersPartition",
+      "pipeline" : "off",
+      "exists" : "left",
+      "out_columns" : [
+        ["o_orderkey", "LONG", "right"],
+        ["o_custkey", "LONG", "right"],
+        ["o_orderdate", "DATE", "right"],
+        ["o_totalprice", "DOUBLE", "right"]
+      ],
+      "filter_condition" : "true",
+      "in_partitions_name" : "s_ps_partitions",
+      "partition_column" : "o_custkey",
+      "out_partitions_name" : "s_ps_partitions"
+    },
+    {
+      "stage_name" : "LineitemPartition",
+      "type" : "BaseTableScanPartition",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\", (taskNum/2 + 1) ",
+      "splits" : 2,
+      "in_columns" : [
+        ["l_orderkey", "LONG"],
+        ["l_quantity", "DOUBLE"]
+      ],
+      "out_columns" : [
+        ["l_orderkey", "LONG"],
+        ["l_quantity", "DOUBLE"]
+      ],
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_lineitem",
+      "out_partitions_name" : "ol_partitions",
+      "partition_column" : "l_orderkey"
+    },
+    {
+      "stage_name" : "CustomerPartition",
+      "type" : "BaseTableScanPartition",
+      "in_file" : "\"customer/customer.tbl.%d.orc\", (taskNum/2 + 1) ",
+      "splits" : 2,
+      "in_columns" : [
+        ["c_custkey", "LONG"],
+        ["c_name", "STRING", 25]
+      ],
+      "out_columns" : [
+        ["c_custkey", "LONG"],
+        ["c_name", "STRING", 25]
+      ],
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_customer",
+      "out_partitions_name" : "oc_partitions",
+      "partition_column" : "c_custkey"
+    },
+    {
+      "stage_name" : "OCJoin",
+      "type" : "PartitionedHashJoin",
+      "left_input" : "InOAggregate",
+      "right_input" : "CustomerPartition",
+      "pipeline" : "off",
+      "out_columns" : [
+        ["o_orderkey", "LONG", "left"],
+        ["o_orderdate", "DATE", "left"],
+        ["o_totalprice", "DOUBLE", "left"],
+        ["c_custkey", "LONG", "right"],
+        ["c_name", "STRING", 25, "right"]
+      ],
+      "filter_condition" : "true",
+      "in_partitions_name" : "oc_partitions",
+      "partition_column" : "o_orderkey",
+      "out_partitions_name" : "ol_partitions"
+    },
+    {
+      "stage_name" : "OLJoin",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "OCJoin",
+      "right_input" : "LineitemPartition",
+      "pipeline" : "off",
+      "group_by_columns" : [
+        ["o_orderkey", "LONG", "left"],
+        ["o_orderdate", "DATE", "left"],
+        ["o_totalprice", "DOUBLE", "left"],
+        ["c_custkey", "LONG", "left"],
+        ["c_name", "STRING", 25, "left"]
+      ],
+      "aggregate_columns" : [
+        ["quantity", "DOUBLE"]
+      ],
+      "order_by_columns" : [
+        ["o_totalprice", "DOUBLE", "DESC"],
+        ["o_orderdate", "DATE"]
+      ],
+      "aggregate_code" : "agg_rec.quantity += right_rec.l_quantity;",
+      "reduce_aggregate" : "agg_rec.quantity += in_agg_rec.quantity;",
+      "filter_condition" : "true",
+      "in_partitions_name" : "ol_partitions",
+      "limit": 100
+    },
+    {
+      "stage_name" : "FinalAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "OLJoin",
+      "limit" : 100
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+
+  void {task_name}(int inPartitions, int inFileIdx, int min_partition, int max_partition, std::vector<SinglePartitionData> *partitionData);

@@ -1,0 +1,38 @@
+  auto dict_out = outs->str();
+  outs.reset();
+
+
+  long total_rows = 0;
+  std::vector<CompressedData> compressedParts;
+  long after_size = dict_out.size() + outPartitions * 8;
+  for (int partNum = 0; partNum < outPartitions; partNum++){{
+    total_rows += partitionData.at(partNum).numRecords;
+    CompressedData cd;
+    auto & curBuf = partitionData.at(partNum).buf;
+    std::string in_data = curBuf.str();
+    cd.data.reset(new char[snappy::MaxCompressedLength(in_data.size())]);
+    snappy::RawCompress(in_data.data(), in_data.size(), cd.data.get(), &cd.size); 
+    after_size += cd.size;
+    curBuf.str("");
+    compressedParts.push_back(std::move(cd));
+  }}
+  
+  uint64_t currSize = dict_out.size() + outPartitions * 8;
+  std::unique_ptr<char[]> outBuf(new char[after_size]);
+  uint64_t currLoc = 0;
+  std::memcpy(outBuf.get()+currLoc, dict_out.data(), dict_out.size());
+  currLoc += dict_out.size();
+  for (int partNum = 0; partNum < outPartitions; partNum++){{
+    currSize += compressedParts[partNum].size;
+    std::memcpy(outBuf.get()+currLoc, reinterpret_cast<char*>(&currSize), sizeof(currSize));
+    currLoc += sizeof(currSize);
+  }}
+  std::string mcd_name = std::to_string(taskNum)+std::string("_pt{operator_idx}_")+query_id+"_";
+  for (int partNum = 0; partNum < outPartitions; partNum++){{
+    auto &cd = compressedParts[partNum];
+    std::memcpy(outBuf.get()+currLoc, cd.data.get(), cd.size);
+    auto mcd_key  = mcd_name+std::to_string(partNum);
+as;ldkfjas;ldkfja;sldkjf;
+
+    currLoc += cd.size;
+  }}

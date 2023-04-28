@@ -1,0 +1,2 @@
+  
+  void {task_name}(std::string &key, uint64_t stripeIdx{params});

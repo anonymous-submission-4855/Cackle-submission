@@ -1,0 +1,85 @@
+{
+  "class_name": "Query14Executor",
+  "pre_initialization" : "struct tm tempDate{};",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    { "name" : "high_date",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 1, 1, 93};\n  high_date = mktime(&tempDate);"
+    },
+    { "name" : "low_date",
+      "type" : "time_t",
+      "initialization" : 
+      "tempDate = {0, 0, 0, 1, 0, 93};\n  low_date = mktime(&tempDate);"
+    }
+    ],
+  "stages" : [
+    {
+      "stage_name" : "LineitemPartition",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["l_partkey", "LONG"],
+        ["l_extendedprice", "DOUBLE"],
+        ["l_discount", "DOUBLE"],
+        ["l_shipdate", "DATE"]
+      ],
+      "out_columns" : [
+        ["l_partkey" , "LONG"],
+        ["l_extendedprice", "DOUBLE"],
+        ["l_discount", "DOUBLE"]
+      ],
+      "partition_column" : "l_partkey",
+      "filter_condition" : "l_shipdate >= low_date && l_shipdate < high_date",
+      "in_partitions_name" : "num_lineitem",
+      "out_partitions_name" : "pl_partitions"
+    },
+    {
+      "stage_name" : "PartPartition",
+      "in_file" : "\"part/part.tbl.%d.orc\", (taskNum/2 + 1) ",
+      "splits" : 2, 
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["p_partkey", "LONG"],
+        ["p_type", "STRING", 25]
+      ],
+      "out_columns" : [
+        ["p_partkey", "LONG"],
+        ["p_type", "STRING", 25, "DICT"]
+      ],
+      "partition_column" : "p_partkey",
+      "filter_condition" : "true",
+      "in_partitions_name" : "num_part",
+      "out_partitions_name" : "pl_partitions"
+    },
+    {
+      "stage_name" : "PLJoinAggregate",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "LineitemPartition",
+      "right_input" : "PartPartition",
+      "pipeline" : "off",
+      "group_by_columns" : [
+        ["none" , "LONG", "NONE"]
+      ],
+      "aggregate_columns" : [
+        ["promo_rev", "DOUBLE"],
+        ["total_rev", "DOUBLE"]
+      ],
+      "order_by_columns" : [
+        ["none", "LONG"]
+      ],
+      "aggregate_code" : "agg_rec.promo_rev += (p_type_dict_encoding_read[right_rec.p_type_enc].find(\"PROMO\") == 0 ) ? left_rec.l_extendedprice * (1.0 - left_rec.l_discount) : 0.0;\n agg_rec.total_rev += left_rec.l_extendedprice * (1.0 - left_rec.l_discount);",
+      "reduce_aggregate" : "agg_rec.promo_rev+=in_agg_rec.promo_rev;\n agg_rec.total_rev+=in_agg_rec.total_rev;",
+      "filter_condition" : "true",
+      "in_partitions_name" : "pl_partitions"
+    },
+    {
+      "stage_name" : "SortFinalAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "PLJoinAggregate",
+      "finalize_out_rec" : "rec.promo_rev = 100.0 * rec.promo_rev / rec.total_rev; rec.total_rev = 0;"
+    }
+  ]
+}

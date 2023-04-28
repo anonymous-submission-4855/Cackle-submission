@@ -1,0 +1,28 @@
+
+void {class_name}::{task_name}(std::string &key, uint64_t stripeIdx{params}){{
+  orc::ReaderOptions readerOpts;
+  auto readerObj = orc::createReader(std::unique_ptr<orc::InputStream>(new S3FileInputStream("{table_s3_bucket}", key, currNumThreads)), readerOpts);
+  orc::Reader *reader = readerObj.get();
+  std::list<std::string> selectedColumns;
+{selected_columns}
+  auto stripeInfo = reader->getStripe(stripeIdx);
+  static const time_t DATE_MULTIPLIER = 24 * 60 * 60;
+
+  orc::RowReaderOptions rowReaderOpts;
+  rowReaderOpts.include(selectedColumns);
+  rowReaderOpts.range(stripeInfo->getOffset(), stripeInfo->getLength());
+  std::unique_ptr<orc::RowReader> rowReader;
+  rowReader = reader->createRowReader(rowReaderOpts);
+  std::unique_ptr<orc::ColumnVectorBatch> batch = rowReader->createRowBatch(1000);
+{vector_batch_definitions}
+{additional_initialization}
+  while(rowReader->next(*batch)){{
+    for (unsigned long i=0; i < batch->numElements; ++i){{
+{row_data}
+      if ({filter_condition}){{
+{row_processing}
+      }}
+    }}
+  }}
+{post_row_processing}
+}}

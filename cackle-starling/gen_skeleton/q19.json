@@ -1,0 +1,94 @@
+{
+  "class_name": "Query19Executor",
+  "pre_initialization" : "",
+  "table_s3_bucket" : "tpch-sf100-orc",
+  "intermediate_s3_bucket" : "INTERMEDIATE_BUCKET_NAME",
+  "constants" : [
+    { "name" : "shipinstruct_1",
+      "type" : "std::string",
+      "initialization" : 
+      "shipinstruct_1 = std::string(\"DELIVER IN PERSON        \", 25);"
+    },
+    { "name" : "shipmode_1",
+      "type" : "std::string",
+      "initialization" : 
+      "shipmode_1 = std::string(\"AIR REG    \", 10);"
+    },
+    { "name" : "shipmode_2",
+      "type" : "std::string",
+      "initialization" : 
+      "shipmode_2 = std::string(\"AIR       \", 10);"
+    }
+    ],
+  "stages" : [
+    {
+      "stage_name" : "LineitemPartition",
+      "in_file" : "\"lineitem/lineitem.tbl.%d.orc\", (taskNum + 1) ",
+      "type" : "BaseTableScanPartition",
+      "in_columns" : [
+        ["l_partkey", "LONG"],
+        ["l_quantity", "DOUBLE"],
+        ["l_extendedprice", "DOUBLE"],
+        ["l_discount", "DOUBLE"],
+        ["l_shipinstruct", "STRING", 25],
+        ["l_shipmode", "STRING", 10]
+      ],
+      "out_columns" : [
+        ["l_partkey" , "LONG"],
+        ["l_quantity" , "DOUBLE"],
+        ["revenue", "DOUBLE", "CUSTOM", "out_rec.revenue = l_extendedprice * (1.0 - l_discount);"]
+      ],
+      "partition_column" : "l_partkey",
+      "filter_condition" : "(l_shipmode == shipmode_1 || l_shipmode == shipmode_2) && l_shipinstruct == shipinstruct_1",
+      "in_partitions_name" : "num_lineitem",
+      "out_partitions_name" : "pl_partitions"
+    },
+    {
+      "stage_name" : "PartPartition",
+      "in_file" : "\"part/part.tbl.%d.orc\", (taskNum/3 + 1) ",
+      "type" : "BaseTableScanPartition",
+      "splits":3,
+      "in_columns" : [
+        ["p_partkey", "LONG"],
+        ["p_brand", "STRING", 10],
+        ["p_size", "LONG"],
+        ["p_container", "STRING", 10]
+      ],
+      "out_columns" : [
+        ["p_partkey", "LONG"],
+        ["p_size", "LONG"],
+        ["p_brand", "STRING", 10, "DICT"],
+        ["p_container", "STRING", 10, "DICT"]
+      ],
+      "partition_column" : "p_partkey",
+      "filter_condition" : "p_size>=1",
+      "in_partitions_name" : "num_part",
+      "out_partitions_name" : "pl_partitions"
+    },
+    {
+      "stage_name" : "PLJoinAggregate",
+      "type" : "PartitionedHashJoinAggregate",
+      "left_input" : "LineitemPartition",
+      "right_input" : "PartPartition",
+      "pipeline" : "off",
+      "group_by_columns" : [
+        ["none" , "LONG", "NONE"]
+      ],
+      "aggregate_columns" : [
+        ["revenue", "DOUBLE"]
+      ],
+      "order_by_columns" : [
+        ["none", "LONG"]
+      ],
+      "aggregate_code" : "agg_rec.revenue += left_rec.revenue;",
+      "filter_condition" : "(p_brand_dict_encoding_read[right_rec.p_brand_enc] == \"Brand#53  \" && (p_container_dict_encoding_read[right_rec.p_container_enc] == \"LG CASE   \"  || p_container_dict_encoding_read[right_rec.p_container_enc] == \"LG BOX    \" ||p_container_dict_encoding_read[right_rec.p_container_enc] ==  \"LG PACK   \" || p_container_dict_encoding_read[right_rec.p_container_enc] ==  \"LG PKG    \" ) && left_rec.l_quantity >= 24.0 && left_rec.l_quantity <= 34.0 && right_rec.p_size <= 15) || (p_brand_dict_encoding_read[right_rec.p_brand_enc] ==  \"Brand#44  \" && (p_container_dict_encoding_read[right_rec.p_container_enc] ==  \"MED BAG   \" ||p_container_dict_encoding_read[right_rec.p_container_enc] ==  \"MED BOX   \" ||p_container_dict_encoding_read[right_rec.p_container_enc] ==  \"MED PKG   \" || p_container_dict_encoding_read[right_rec.p_container_enc] ==  \"MED PACK  \" ) && left_rec.l_quantity >= 16.0 && left_rec.l_quantity <= 26.0 && right_rec.p_size <= 10) || (p_brand_dict_encoding_read[right_rec.p_brand_enc] ==  \"Brand#11  \" && (p_container_dict_encoding_read[right_rec.p_container_enc] ==  \"SM CASE   \" ||p_container_dict_encoding_read[right_rec.p_container_enc] ==  \"SM BOX    \" ||p_container_dict_encoding_read[right_rec.p_container_enc] ==  \"SM PACK   \" || p_container_dict_encoding_read[right_rec.p_container_enc] ==  \"SM PKG    \" ) && left_rec.l_quantity >= 3.0 && left_rec.l_quantity <= 13.0 && right_rec.p_size <= 5)",
+      "reduce_aggregate" : "agg_rec.revenue+=in_agg_rec.revenue;",
+      "in_partitions_name" : "pl_partitions"
+    },
+    {
+      "stage_name" : "SortFinalAggregate",
+      "type" : "FinalAggregate",
+      "in_operator" : "PLJoinAggregate"
+    }
+  ]
+}

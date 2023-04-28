@@ -1,0 +1,65 @@
+void {class_name}::{task_name}(int inPartitions, int inFileIdx, int min_partition, int max_partition, std::vector<SinglePartitionData> *partitionData){{
+  static thread_local S3Client s3("{intermediate_s3_bucket}", "us-east-1", currNumThreads);
+  int64_t startIdx; 
+  int64_t endIdx;
+  long startread = 0;
+  int64_t numRecords = 0;
+  //TODO:
+  long endread = sizeof(int64_t)*inPartitions+{in_max_encoding_size};
+  auto startBytes = std::unique_ptr<int64_t[]>(new int64_t[max_partition-min_partition]);
+  auto endBytes = std::unique_ptr<int64_t[]>(new int64_t[max_partition-min_partition]);
+{in_local_dicts}
+  uint8_t numDictEntries;
+  {{
+    std::unique_ptr<char[]> buf_mgr(new char[endread-startread]);
+    char * buf = buf_mgr.get(); 
+    int64_t currIdx = 0;
+    auto before_read = std::chrono::steady_clock::now();
+    readFromS3(s3, std::to_string(inFileIdx)+"_pt{in_operator_idx}_"+query_id, startread, endread, buf); 
+    auto after_read = std::chrono::steady_clock::now();
+    
+    {in_populate_dicts}
+
+    startIdx = currIdx+sizeof(uint64_t)*inPartitions;
+    if (min_partition != 0){{
+      std::memcpy(reinterpret_cast<char*>(&startIdx), buf+currIdx+(sizeof(uint64_t)*(min_partition-1)), sizeof(startIdx));
+    }}
+    std::memcpy(reinterpret_cast<char*>(&endIdx), buf+currIdx+(sizeof(uint64_t)*(max_partition-1)), sizeof(endIdx));
+    for(int partition = min_partition; partition < max_partition; partition++){{
+      int64_t start = startIdx;
+      int64_t end;
+      if (partition != 0){{
+        std::memcpy(reinterpret_cast<char*>(&start), buf+currIdx+(sizeof(uint64_t)*(partition-1)), sizeof(start));
+      }}
+      std::memcpy(reinterpret_cast<char*>(&end), buf+currIdx+(sizeof(uint64_t)*(partition)), sizeof(end)); 
+      startBytes[partition-min_partition] = start;
+      endBytes[partition-min_partition] = end;
+    }}
+  }}
+  {{
+    if (endIdx == startIdx) return;
+    uint64_t raw_len = endIdx-startIdx;
+    std::unique_ptr<char[]> buf_mgr_raw(new char[raw_len]);
+    int64_t currIdx = 0;
+    auto before_read = std::chrono::steady_clock::now();
+    readFromS3(s3, std::to_string(inFileIdx)+"_pt{in_operator_idx}_"+query_id, startIdx, endIdx, buf_mgr_raw.get());
+    auto after_read = std::chrono::steady_clock::now();
+    int64_t total_len;
+    
+    char * buf = buf_mgr_raw.get();
+    total_len = raw_len;        
+    int64_t total_records = total_len/{in_record_size};
+    {remap_records}
+    for (int partition = min_partition; partition<max_partition; partition++){{
+      int partitionIdx = partition-min_partition;
+      int64_t startByte = startBytes[partitionIdx] - startIdx;
+      int64_t endByte = endBytes[partitionIdx] - startIdx;
+      int64_t numRecords = (endByte-startByte)/{in_record_size};
+      muxs[0].lock();
+      partitionData->at(partition).numRecords+=numRecords;
+      partitionData->at(partition).buf.write(buf+startByte, endByte-startByte);
+      muxs[0].unlock();
+    }}
+
+  }}
+}}
