@@ -2,7 +2,7 @@
 
 This repository contains software artifacts from the Cackle Project. It has been anonymized for the reviewers. Below is a brief description of the folders. The model is implemented in Python. Modified Starling is written in C++ with code generation tool written in Python. Other components implemented in Rust. 
 
-Identifying information, including AWS buckets, and other private information have been removed, so thecode, with the exception of the model, will not execute as is. 
+Identifying information, including AWS buckets, and other private information have been removed, so the code, with the exception of the model, may not compile or execute as is. 
 
 - **cackle-cache**: The caching node key-value store
 - **cackle-coordinator**: The coordinator implementation. Contains code for executing queries, recording history, and adjusting compute and cache allocation
